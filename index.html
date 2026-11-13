@@ -38,6 +38,7 @@
     <button role="tab" data-aba="energia">Energia e tarifa</button>
     <button role="tab" data-aba="diagnostico">Diagnóstico</button>
     <button role="tab" data-aba="engenheiros">Engenheiros</button>
+    <button role="tab" data-aba="acompanhamento">Acompanhamento</button>
     <button role="tab" data-aba="sobre">Como funciona</button>
   </nav>
 
@@ -72,6 +73,10 @@
           <div class="tabela-rolagem"><table id="tabConta" class="tabela"></table></div>
           <p class="nota" id="notaConta"></p>
         </div>
+      </div>
+      <div class="painel" id="painelImpacto">
+        <h3>Impacto na rede e no clima, sem exagero</h3>
+        <div id="impactoVisao"></div>
       </div>
       <div id="avisos" class="avisos"></div>
     </section>
@@ -166,6 +171,7 @@
         <div class="painel"><h3>Geração solar e rede</h3><div class="form" id="formSolar"></div><h4>Céu previsto em cada dia</h4><div id="formNeb" class="neb"></div></div>
       </div>
       <div class="painel"><h3>Objetivo do planejamento</h3><div class="form" id="formObjetivo"></div></div>
+      <div class="painel"><h3>Impacto ambiental</h3><div class="form" id="formImpacto"></div><p class="nota">Mudar este número só muda o CO₂ mostrado; a agenda e a conta não mudam.</p></div>
     </section>
 
     <!-- ============================== DIAGNÓSTICO ============================== -->
@@ -185,6 +191,7 @@
           <li><strong>Você pede a avaliação.</strong> O pedido leva os dados da fábrica, a agenda e este diagnóstico.</li>
           <li><strong>Um engenheiro confere.</strong> Ele escolhe os pedidos em que mais pode ajudar, confere em campo o que a ferramenta não sabe e aprova, ajusta ou recusa cada recomendação.</li>
           <li><strong>Você recebe o parecer</strong> e segue com segurança, sabendo o que foi aprovado.</li>
+          <li><strong>Depois, outras pessoas entram.</strong> O encarregado aplica a agenda, eletricista ou instaladora executam as obras e a distribuidora aprova o que muda no contrato. Cada recomendação acima diz quem decide, quem executa e quem aprova. Na aba Acompanhamento, as faturas mostram se a economia apareceu.</li>
         </ol>
         <div class="form">
           <label for="pedCidade">Cidade<input type="text" id="pedCidade" placeholder="Ex.: São Paulo (SP)" autocomplete="off"></label>
@@ -226,6 +233,10 @@
       <div class="painel">
         <h3>Fator de carga e fator de potência</h3>
         <div id="txtFC"></div>
+      </div>
+      <div class="painel">
+        <h3>Impacto ambiental: o que muda de verdade</h3>
+        <div id="impactoDiag"></div>
       </div>
     </section>
 
@@ -280,6 +291,35 @@
       <div class="painel" id="painelRevisao" hidden></div>
     </section>
 
+    <!-- ============================== ACOMPANHAMENTO ============================== -->
+    <section id="aba-acompanhamento" class="aba" role="tabpanel">
+      <div class="painel">
+        <h3>Depois da mudança: a economia apareceu na fatura?</h3>
+        <p>O plano só vale se a economia aparecer na fatura de verdade. Digite as faturas dos meses antes e depois de começar a seguir o plano. O Carga Certa compara a economia real com a que a simulação previu e avisa quando é hora de chamar o engenheiro de novo.</p>
+        <ul class="passos">
+          <li><strong>Quem digita:</strong> o dono ou o administrativo, com a fatura na mão (energia em kWh, demanda medida e valor total).</li>
+          <li><strong>Quem acompanha:</strong> o encarregado confere se a agenda está sendo seguida; se a economia ficar abaixo do previsto, o engenheiro que deu o parecer olha de novo.</li>
+        </ul>
+        <div id="avisoExemploAcomp"></div>
+        <div class="form">
+          <label for="acInicio">Mês em que começou a seguir o plano<input type="month" id="acInicio"></label>
+        </div>
+        <h4>Faturas</h4>
+        <div id="edFaturas"></div>
+        <div class="linha-botoes">
+          <button class="btn" id="btnAcExemplo" hidden>Carregar faturas de exemplo (fictícias)</button>
+          <button class="btn" id="btnAcLimpar">Apagar as faturas</button>
+        </div>
+        <p class="nota">As faturas ficam guardadas neste navegador junto com os dados da fábrica, entram no relatório e vão junto no pedido de avaliação ao engenheiro.</p>
+      </div>
+      <div class="painel">
+        <h3>Resultado</h3>
+        <div id="resAcomp"></div>
+        <div class="grafico"><canvas id="gAcomp" aria-label="Valor das faturas por mês"></canvas></div>
+        <p class="nota" id="notaGAcomp">Barras cinza: meses antes do plano. Barras verdes: meses seguindo o plano. Linhas tracejadas: média de antes e valor previsto pela simulação.</p>
+      </div>
+    </section>
+
     <!-- ============================== COMO FUNCIONA ============================== -->
     <section id="aba-sobre" class="aba texto" role="tabpanel">
       <div class="painel">
@@ -292,7 +332,11 @@
           <li><strong>Dia a dia:</strong> a equipe escreve o que aconteceu ("o torno 2 quebrou", "o cliente antecipou o P107"). A IA transforma a mensagem em restrições, uma pessoa confere e o plano é refeito sem mexer no que já começou.</li>
           <li><strong>Diagnóstico de engenharia:</strong> modalidade tarifária (inclusive a Tarifa Branca), demanda contratada, fator de carga, quanto de solar instalar considerando corte por limite de injeção e volt-watt, fator de potência e banco de capacitores. Sai um relatório para o engenheiro responsável assinar.</li>
           <li><strong>Ponte com engenheiros:</strong> a fábrica pede uma avaliação. Engenheiros voluntários, de empresas juniores ou consultores veem a fila de pedidos ordenada pela economia possível e pela especialidade de cada um, conferem em campo o que a ferramenta não sabe e devolvem um parecer com nome e registro.</li>
+          <li><strong>Quem faz o quê:</strong> cada recomendação diz quem decide (o dono), quem executa (encarregado, eletricista, instaladora), quem aprova (engenheiro com ART, distribuidora) e o entrave típico. O engenheiro não resolve tudo sozinho.</li>
+          <li><strong>Acompanhamento:</strong> depois da mudança, a fábrica digita as faturas de cada mês. A ferramenta compara a economia real com a prevista e avisa quando é preciso chamar o engenheiro de novo.</li>
         </ol>
+        <h3>Impacto ambiental, sem exagero</h3>
+        <p>Gastar menos não é o mesmo que poluir menos. A agenda muda o <strong>horário</strong> do consumo e quase não muda o total. O CO₂ só cai quando cai a energia tirada da rede, por exemplo quando a fábrica usa mais da própria solar; a ferramenta mostra esse número com o fator médio de emissão do Sistema Interligado Nacional (MCTI). O ganho maior para o sistema está no horário: tirar consumo do fim da tarde alivia a rede quando o ONS precisa acionar termelétricas, e usar energia no meio do dia ajuda a aproveitar a solar e a eólica que hoje são cortadas.</p>
         <h3>Engenharia por trás</h3>
         <ul>
           <li><strong>Tarifas:</strong> valores homologados pela ANEEL para a Enel SP (REH nº 3.596/2026), sem tributos; os tributos entram como percentual "por dentro". Demanda faturada = maior entre medida e contratada; acima de 105% da contratada, o excedente paga 2× a tarifa de demanda (REN 1.000/2021).</li>
@@ -315,6 +359,7 @@
           <li>Não modelamos custo de mão de obra noturna, tempo de preparação entre produtos nem estoques intermediários.</li>
           <li>Tarifas, tributos e regras mudam: confira sempre com a fatura e a distribuidora.</li>
           <li>A fila de pedidos fica no navegador de cada pessoa. Para chegar a outro engenheiro, o pedido vai por arquivo; numa versão completa, a fila seria compartilhada.</li>
+          <li>O CO₂ usa o fator médio anual da rede, não o fator de cada hora; por isso mudar só o horário quase não muda o CO₂ calculado. As faturas do acompanhamento são digitadas à mão; numa versão completa, viriam do medidor ou da distribuidora.</li>
         </ul>
       </div>
     </section>
@@ -337,6 +382,7 @@
   <script src="js/otimizador.js"></script>
   <script src="js/diagnostico.js"></script>
   <script src="js/revisao.js"></script>
+  <script src="js/impacto.js"></script>
   <script src="js/ia-local.js"></script>
   <script src="js/ia-nuvem.js"></script>
   <script src="js/eventos.js"></script>

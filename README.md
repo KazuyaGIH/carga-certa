@@ -18,6 +18,19 @@ Nos exemplos incluídos:
 
 Na metalúrgica, o diagnóstico ainda mostra que dá para baixar a demanda contratada de 100 para 60 kW (mais R$ 983/mês) e que a solar derruba o fator de potência medido (reativo excedente de ~R$ 1.200/mês, resolvido com um banco automático de 35 kvar).
 
+**Impacto ambiental, sem exagero.** Gastar menos não é o mesmo que poluir menos, e a ferramenta mostra a diferença. A agenda muda o **horário**, quase não muda o total: o CO₂ só cai quando cai a energia tirada da rede.
+
+| Por mês (exemplo) | Energia da rede | No horário de ponta | Solar própria usada | CO₂ da energia da rede |
+|---|---|---|---|---|
+| Metalúrgica | 15.331 → 14.778 kWh | 3.413 → 1.294 kWh | 6.747 → 7.300 kWh | 590 → 569 kg |
+| Padaria | 7.181 → 7.121 kWh | 1.805 → 623 kWh | 1.695 → 1.755 kWh | 276 → 274 kg |
+
+O CO₂ usa o fator médio do Sistema Interligado Nacional (38,5 kg/MWh em 2023, MCTI), configurável na aba *Energia e tarifa*. O ganho maior para o sistema está no horário: tirar consumo da ponta alivia a rede quando o ONS aciona termelétricas, e usar energia no meio do dia ajuda a aproveitar a solar e a eólica que hoje são cortadas.
+
+**Quem faz o quê.** Cada recomendação diz quem decide (o dono), quem executa (encarregado, eletricista, instaladora), quem aprova (engenheiro com ART, distribuidora) e o entrave típico (adicional noturno, prazos do contrato, investimento, harmônicas). O engenheiro valida; ele não resolve tudo sozinho.
+
+**Acompanhamento.** Depois da mudança, a fábrica digita as faturas de cada mês na aba *Acompanhamento*. A ferramenta compara a média antes × depois com a economia prevista e avisa quando é hora de chamar o engenheiro de novo. A metalúrgica tem faturas de exemplo (fictícias): economia real de 18,3% contra 21,4% prevista.
+
 ---
 
 ## Como abrir
@@ -29,13 +42,14 @@ Os dados ficam salvos no próprio navegador. Para levar um cenário para outra p
 
 ## Como usar
 
-1. **Visão geral**: conta do mês antes e depois, pico, energia na ponta, fator de carga, solar aproveitada e entregas no prazo. O gráfico mostra a curva de carga da semana (botões *Planejado*, *Como é hoje* e *Comparar*).
+1. **Visão geral**: conta do mês antes e depois, pico, energia na ponta, fator de carga, solar aproveitada e entregas no prazo. O gráfico mostra a curva de carga da semana (botões *Planejado*, *Como é hoje* e *Comparar*). Embaixo, o bloco de impacto: energia tirada da rede, energia na ponta, solar usada e CO₂, com frases honestas sobre o que muda.
 2. **Agenda**: o Gantt das máquinas (semana ou um dia) e a tabela de etapas. Passe o mouse nas barras.
 3. **Eventos do dia**: escreva o que aconteceu, como no grupo da fábrica, ou clique num exemplo. Clique em **Interpretar**, confira os campos e clique em **Aplicar e replanejar**. O que já começou antes de "agora" não muda, e o plano só mexe onde vale a pena. Dá para **Desfazer**.
 4. **Fábrica** e **Energia e tarifa**: edite máquinas, pedidos, cargas, tarifa e solar. Depois clique em **Otimizar agenda**.
-5. **Diagnóstico**: clique em **Comparar tarifas e dimensionar a solar**. Em *Avaliação por um engenheiro*, clique em **Pedir avaliação** (vai para a fila deste navegador) ou em **Baixar pedido** (arquivo para mandar a um engenheiro por e-mail ou WhatsApp).
+5. **Diagnóstico**: clique em **Comparar tarifas e dimensionar a solar**. Cada recomendação mostra quem decide, executa e aprova e o entrave típico. No fim da aba, a tabela completa de impacto ambiental. Em *Avaliação por um engenheiro*, clique em **Pedir avaliação** (vai para a fila deste navegador) ou em **Baixar pedido** (arquivo para mandar a um engenheiro por e-mail ou WhatsApp).
 6. **Engenheiros**: o lado do engenheiro. Preencha o perfil, veja a fila (ou clique em **Carregar pedidos de exemplo**), abra um caso, marque o que conferiu, decida cada recomendação e clique em **Emitir parecer**. Para devolver à fábrica, **Baixar parecer**; ela abre o arquivo com **Abrir**.
-7. **Relatório**: gera o documento para imprimir ou salvar em PDF. Com parecer, sai com a decisão do engenheiro e o nome dele na assinatura.
+7. **Acompanhamento**: marque o mês em que começou a seguir o plano e digite as faturas (kWh, demanda medida, valor). Na metalúrgica, **Carregar faturas de exemplo** mostra como fica. As faturas não mudam a agenda nem invalidam o parecer, e vão junto no pedido ao engenheiro.
+8. **Relatório**: gera o documento para imprimir ou salvar em PDF. Com parecer, sai com a decisão do engenheiro e o nome dele na assinatura. Inclui impacto ambiental, quem faz o quê e o acompanhamento das faturas.
 
 ## Inteligência artificial
 
@@ -79,7 +93,8 @@ Nos exemplos, roda no navegador em cerca de 1 segundo.
 | `js/modelo.js` | Transforma o cenário em intervalos de 15 min |
 | `js/otimizador.js` | Agenda "como é hoje", otimização e avaliação da conta |
 | `js/diagnostico.js` | Modalidades, demanda contratada, solar, fator de potência |
-| `js/revisao.js` | Ponte com o engenheiro: pedido, fila por impacto, o que conferir e parecer |
+| `js/revisao.js` | Ponte com o engenheiro: pedido, fila por impacto, o que conferir, quem faz o quê e parecer |
+| `js/impacto.js` | Impacto ambiental (kWh da rede, ponta, solar, CO₂) e acompanhamento das faturas |
 | `js/ia-local.js` | IA local (Naive Bayes + extração em português) |
 | `js/ia-nuvem.js` | Gemini e Claude (opcionais) |
 | `js/eventos.js` | Aplica os eventos no cenário |
@@ -104,6 +119,8 @@ Não há etapa de compilação: é HTML, CSS e JavaScript puro.
 - Não modelamos custo de mão de obra noturna, tempo de preparação entre produtos nem estoques intermediários.
 - Tarifas, tributos e regras mudam: confira sempre com a fatura e a distribuidora.
 - A fila de pedidos fica no navegador de cada pessoa, e o pedido chega a outro engenheiro por arquivo. Numa versão completa, a fila seria compartilhada, com cadastro dos engenheiros e conferência do registro no CREA.
+- O CO₂ usa o fator médio anual da rede, não o de cada hora; por isso mudar só o horário quase não muda o CO₂ calculado. A energia injetada pela solar não entra na conta do CO₂.
+- As faturas do acompanhamento são digitadas à mão. A comparação usa a porcentagem de economia, porque a simulação estima o mês a partir de uma semana; se a produção mudar muito, compare também o kWh.
 
 ## Fontes
 
@@ -111,3 +128,7 @@ Não há etapa de compilação: é HTML, CSS e JavaScript puro.
 - ANEEL, REN nº 1.000/2021 (postos tarifários, demanda, ultrapassagem, reativo excedente).
 - Lei nº 14.300/2022 (micro e minigeração distribuída; transição do Fio B).
 - NOAA, *General Solar Position Calculations*; B. Haurwitz (1945), modelo de céu claro.
+- MCTI, fator médio de emissão do SIN: 38,5 kg de CO₂ por MWh em 2023 ([eixos, 16/02/2024](https://eixos.com.br/energia-eletrica/brasil-tem-menor-taxa-de-emissao-de-carbono-na-geracao-eletrica-em-onze-anos/)).
+- ONS: previsão de déficit de cerca de 4 GW no horário de ponta e geração termelétrica maximizada no 2º semestre de 2025 ([Movimento Econômico, 03/07/2025](https://movimentoeconomico.com.br/economia/energia/2025/07/03/deficit-de-potencia-leva-ons-a-acionar-termicas-com-impacto-na-conta-de-luz/)).
+- Volt Robotics: cerca de 20,6% da energia limpa que poderia ter sido produzida em 2025 foi cortada; os cortes são definidos pelo ONS ([Movimento Econômico, 03/01/2026](https://movimentoeconomico.com.br/economia/energia/2026/01/03/brasil-desperdica-206-da-energia-limpa-e-perde-r-6-bilhoes-em-2025/)).
+- CLT, art. 73 (adicional noturno de pelo menos 20%).
