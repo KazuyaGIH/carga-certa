@@ -3,6 +3,8 @@
 **Planejamento de produção que olha a conta de luz.** Protótipo da equipe **T³ch** para o **Hack@Poli 2026**
 ("Engenharia com propósito: o papel do engenheiro na Agenda 2030"; eixo Inovação e Digitalização da Indústria Nacional; ODS 7, 9 e 12).
 
+**Abrir o protótipo:** https://kazuyagih.github.io/carga-certa/
+
 Pequenas indústrias pagam energia pelo **horário** (ponta, intermediário, fora de ponta) e, no grupo A, pelo **maior pico de 15 minutos do mês**. O Carga Certa recebe os pedidos, as etapas, as máquinas e a tarifa, e monta a agenda de produção que cumpre os prazos gastando menos. Quando algo acontece na fábrica ("o torno 2 quebrou"), a IA transforma a mensagem em restrições e o plano é refeito. Um diagnóstico de engenharia elétrica completa a análise: modalidade tarifária, demanda contratada, fator de carga, quanto de solar instalar (com corte por limite de injeção e volt-watt) e fator de potência.
 
 Nos exemplos incluídos:
@@ -18,7 +20,7 @@ Na metalúrgica, o diagnóstico ainda mostra que dá para baixar a demanda contr
 
 ## Como abrir
 
-- **Pelo link** (depois de publicado no GitHub Pages): abre em qualquer navegador, no computador ou no celular, sem instalar nada.
+- **Pelo link** https://kazuyagih.github.io/carga-certa/ : abre em qualquer navegador, no computador ou no celular, sem instalar nada.
 - **Sem internet** (bom como reserva no dia da apresentação): baixe a pasta inteira, abra a pasta e dê dois cliques em `index.html`. Tudo funciona, menos a IA na nuvem (Gemini/Claude). A IA local continua funcionando.
 
 Os dados ficam salvos no próprio navegador. Para levar um cenário para outra pessoa, use **Salvar** (baixa um `.json`) e **Abrir**.
@@ -88,7 +90,7 @@ Não há etapa de compilação: é HTML, CSS e JavaScript puro.
 
 ## Para a equipe editar
 
-- **Pelo site do GitHub:** abra o arquivo, clique no lápis, edite e clique em *Commit changes*. Em um ou dois minutos o link publicado atualiza.
+- **Pelo site do GitHub:** abra o arquivo, clique no lápis, edite e clique em *Commit changes*. Em um ou dois minutos o link publicado atualiza. Para editar, a pessoa precisa de uma conta no GitHub e de um convite do dono do repositório (*Settings → Collaborators → Add people*).
 - **No computador:** baixe ou clone o repositório, edite e abra o `index.html` no navegador. Se tiver o Node instalado, rode `node testes/testar.js` antes de enviar.
 - Para mudar os exemplos, edite `dados/exemplos.js`. Para trocar o nome do produto, procure por "Carga Certa" no `index.html`.
 
