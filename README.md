@@ -7,6 +7,8 @@
 
 Pequenas indústrias pagam energia pelo **horário** (ponta, intermediário, fora de ponta) e, no grupo A, pelo **maior pico de 15 minutos do mês**. O Carga Certa recebe os pedidos, as etapas, as máquinas e a tarifa, e monta a agenda de produção que cumpre os prazos gastando menos. Quando algo acontece na fábrica ("o torno 2 quebrou"), a IA transforma a mensagem em restrições e o plano é refeito. Um diagnóstico de engenharia elétrica completa a análise: modalidade tarifária, demanda contratada, fator de carga, quanto de solar instalar (com corte por limite de injeção e volt-watt) e fator de potência.
 
+**Ponte com engenheiros.** A pequena indústria quase nunca tem um engenheiro de energia. Pela aba *Diagnóstico*, ela pede uma avaliação; na aba *Engenheiros*, engenheiros voluntários, de empresas juniores ou consultores veem a fila de pedidos ordenada pela economia possível (em R$ ou em % da conta) e pela especialidade de cada um. Para cada recomendação, o engenheiro segue a lista do que conferir em campo (faturas, placas, medições, telhado; o sistema avisa onde é preciso ART) e aprova, ajusta ou recusa. O parecer volta para a fábrica com nome e registro, entra no relatório e avisa se os dados mudaram depois dele.
+
 Nos exemplos incluídos:
 
 | Cenário | Conta hoje | Conta planejada | Pico | Entregas |
@@ -31,8 +33,9 @@ Os dados ficam salvos no próprio navegador. Para levar um cenário para outra p
 2. **Agenda**: o Gantt das máquinas (semana ou um dia) e a tabela de etapas. Passe o mouse nas barras.
 3. **Eventos do dia**: escreva o que aconteceu, como no grupo da fábrica, ou clique num exemplo. Clique em **Interpretar**, confira os campos e clique em **Aplicar e replanejar**. O que já começou antes de "agora" não muda, e o plano só mexe onde vale a pena. Dá para **Desfazer**.
 4. **Fábrica** e **Energia e tarifa**: edite máquinas, pedidos, cargas, tarifa e solar. Depois clique em **Otimizar agenda**.
-5. **Diagnóstico**: clique em **Comparar tarifas e dimensionar a solar**.
-6. **Relatório**: gera o documento para imprimir ou salvar em PDF, com espaço para o engenheiro responsável assinar.
+5. **Diagnóstico**: clique em **Comparar tarifas e dimensionar a solar**. Em *Avaliação por um engenheiro*, clique em **Pedir avaliação** (vai para a fila deste navegador) ou em **Baixar pedido** (arquivo para mandar a um engenheiro por e-mail ou WhatsApp).
+6. **Engenheiros**: o lado do engenheiro. Preencha o perfil, veja a fila (ou clique em **Carregar pedidos de exemplo**), abra um caso, marque o que conferiu, decida cada recomendação e clique em **Emitir parecer**. Para devolver à fábrica, **Baixar parecer**; ela abre o arquivo com **Abrir**.
+7. **Relatório**: gera o documento para imprimir ou salvar em PDF. Com parecer, sai com a decisão do engenheiro e o nome dele na assinatura.
 
 ## Inteligência artificial
 
@@ -76,6 +79,7 @@ Nos exemplos, roda no navegador em cerca de 1 segundo.
 | `js/modelo.js` | Transforma o cenário em intervalos de 15 min |
 | `js/otimizador.js` | Agenda "como é hoje", otimização e avaliação da conta |
 | `js/diagnostico.js` | Modalidades, demanda contratada, solar, fator de potência |
+| `js/revisao.js` | Ponte com o engenheiro: pedido, fila por impacto, o que conferir e parecer |
 | `js/ia-local.js` | IA local (Naive Bayes + extração em português) |
 | `js/ia-nuvem.js` | Gemini e Claude (opcionais) |
 | `js/eventos.js` | Aplica os eventos no cenário |
@@ -99,6 +103,7 @@ Não há etapa de compilação: é HTML, CSS e JavaScript puro.
 - A conta mensal é estimada a partir de uma semana; o pico real do mês pode ser maior.
 - Não modelamos custo de mão de obra noturna, tempo de preparação entre produtos nem estoques intermediários.
 - Tarifas, tributos e regras mudam: confira sempre com a fatura e a distribuidora.
+- A fila de pedidos fica no navegador de cada pessoa, e o pedido chega a outro engenheiro por arquivo. Numa versão completa, a fila seria compartilhada, com cadastro dos engenheiros e conferência do registro no CREA.
 
 ## Fontes
 

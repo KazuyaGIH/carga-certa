@@ -37,6 +37,7 @@
     <button role="tab" data-aba="fabrica">Fábrica</button>
     <button role="tab" data-aba="energia">Energia e tarifa</button>
     <button role="tab" data-aba="diagnostico">Diagnóstico</button>
+    <button role="tab" data-aba="engenheiros">Engenheiros</button>
     <button role="tab" data-aba="sobre">Como funciona</button>
   </nav>
 
@@ -177,21 +178,29 @@
         <ul id="listaRecom" class="recom"></ul>
         <p class="nota">As recomendações servem de ponto de partida para o engenheiro responsável validar com medições reais e com as regras da distribuidora.</p>
       </div>
-      <div class="painel">
-        <h3>Validação por um engenheiro</h3>
-        <p>Antes de mudar o contrato de demanda, trocar de tarifa ou comprar equipamentos, o diagnóstico precisa ser conferido por um engenheiro eletricista. A pequena indústria quase nunca tem um na equipe; o Carga Certa prepara o material para um engenheiro parceiro (empresa júnior, consultor, professor ou voluntário) revisar em poucos minutos.</p>
+      <div class="painel" id="painelPedido">
+        <h3>Avaliação por um engenheiro</h3>
+        <p>Mudar o contrato de demanda, trocar de tarifa ou comprar equipamentos precisa da conferência de um engenheiro eletricista, com medições reais. A pequena indústria quase nunca tem um na equipe e raramente pode pagar uma consultoria completa. O Carga Certa monta o pedido com tudo que o engenheiro precisa e devolve a você um parecer com o nome e o registro dele.</p>
         <ol class="passos">
-          <li>Gere o <strong>relatório</strong> e salve em PDF.</li>
-          <li>Escreva para o engenheiro com o resumo abaixo e anexe o PDF. Ele confere, ajusta e assina.</li>
+          <li><strong>Você pede a avaliação.</strong> O pedido leva os dados da fábrica, a agenda e este diagnóstico.</li>
+          <li><strong>Um engenheiro confere.</strong> Ele escolhe os pedidos em que mais pode ajudar, confere em campo o que a ferramenta não sabe e aprova, ajusta ou recusa cada recomendação.</li>
+          <li><strong>Você recebe o parecer</strong> e segue com segurança, sabendo o que foi aprovado.</li>
         </ol>
         <div class="form">
-          <label for="inpEngenheiro">E-mail do engenheiro (opcional)<input type="email" id="inpEngenheiro" placeholder="nome@exemplo.com" autocomplete="off"></label>
+          <label for="pedCidade">Cidade<input type="text" id="pedCidade" placeholder="Ex.: São Paulo (SP)" autocomplete="off"></label>
+          <label for="pedContato">Contato para o engenheiro<input type="text" id="pedContato" placeholder="telefone ou e-mail" autocomplete="off"></label>
+          <label for="inpEngenheiro">E-mail do engenheiro (se já tiver um)<input type="email" id="inpEngenheiro" placeholder="nome@exemplo.com" autocomplete="off"></label>
+          <label for="pedMensagem" class="largo">Recado para o engenheiro (opcional)<textarea id="pedMensagem" rows="2" placeholder="Ex.: a conta subiu depois que trocamos de tarifa; queremos saber se vale instalar solar."></textarea></label>
         </div>
+        <div id="estadoPedido"></div>
         <div class="linha-botoes">
-          <button class="btn" id="btnRelatorio2">Gerar relatório</button>
-          <button class="btn primario" id="btnEmailEng">Escrever e-mail</button>
+          <button class="btn primario" id="btnPedir">Pedir avaliação</button>
+          <button class="btn" id="btnBaixarPedido" title="Arquivo para mandar a um engenheiro por e-mail ou WhatsApp">Baixar pedido (.json)</button>
+          <button class="btn" id="btnEmailEng">Escrever e-mail</button>
           <button class="btn" id="btnCopiarResumo">Copiar resumo</button>
+          <button class="btn" id="btnRelatorio2">Gerar relatório</button>
         </div>
+        <p class="nota">Neste protótipo, a rede de engenheiros é simulada neste navegador: o pedido aparece na aba Engenheiros. Para mandar a um engenheiro de verdade, baixe o pedido e envie o arquivo; ele abre na aba Engenheiros, em "Importar pedido".</p>
       </div>
       <div class="grade2">
         <div class="painel">
@@ -220,6 +229,57 @@
       </div>
     </section>
 
+    <!-- ============================== ENGENHEIROS ============================== -->
+    <section id="aba-engenheiros" class="aba" role="tabpanel">
+      <div class="painel">
+        <h3>Ponte com engenheiros</h3>
+        <p>A pequena indústria quase nunca tem um engenheiro de energia. Do outro lado, engenheiros voluntários, empresas juniores, professores com seus alunos e consultores têm o conhecimento, mas não sabem onde ele faz mais diferença. Esta aba é o lado do engenheiro:</p>
+        <ol class="passos">
+          <li>As fábricas mandam pedidos de avaliação pela aba Diagnóstico, com os dados, a agenda e o diagnóstico prontos.</li>
+          <li>Você vê a fila ordenada pela economia possível, com destaque para o que combina com a sua especialidade, e escolhe onde ajudar.</li>
+          <li>Para cada recomendação, você confere em campo o que a ferramenta não sabe (faturas, placas das máquinas, medições, telhado) e aprova, ajusta ou recusa.</li>
+          <li>A fábrica recebe o parecer com o seu nome e registro.</li>
+        </ol>
+        <p class="nota">Neste protótipo, a fila fica guardada neste navegador. Numa versão completa, ela seria compartilhada por uma rede de engenheiros com cadastro e registro no CREA conferidos.</p>
+      </div>
+      <div class="grade-eng">
+        <div class="painel" id="painelPerfil">
+          <h3>Seu perfil</h3>
+          <div class="form form-1">
+            <label for="engNome">Nome<input type="text" id="engNome" placeholder="Seu nome" autocomplete="off"></label>
+            <label for="engRegistro">Registro profissional<input type="text" id="engRegistro" placeholder="Ex.: CREA-SP 000000000" autocomplete="off"></label>
+            <label for="engOrg">Organização<input type="text" id="engOrg" placeholder="empresa júnior, consultoria, voluntário…" autocomplete="off"></label>
+          </div>
+          <fieldset class="especialidades" id="engEsp">
+            <legend>Especialidades</legend>
+          </fieldset>
+          <p class="nota">Fica só neste navegador. O nome e o registro vão no parecer.</p>
+        </div>
+        <div class="painel">
+          <div class="painel-cab">
+            <h3>Pedidos de avaliação</h3>
+            <div class="filtros-fila">
+              <label for="selOrdem" class="oculto">Ordenar</label>
+              <select id="selOrdem">
+                <option value="reais">Maior economia por mês</option>
+                <option value="percentual">Maior economia em % da conta</option>
+                <option value="antigos">Mais antigos primeiro</option>
+              </select>
+              <label class="check"><input type="checkbox" id="chkCombina"> só o que combina comigo</label>
+            </div>
+          </div>
+          <ol id="fila" class="fila"></ol>
+          <div class="linha-botoes">
+            <button class="btn" id="btnImportarPedido">Importar pedido (.json)</button>
+            <button class="btn" id="btnExemplosFila">Carregar pedidos de exemplo</button>
+            <input type="file" id="arquivoPedido" accept=".json,application/json" hidden>
+          </div>
+          <p class="nota">A economia possível soma as recomendações de cada pedido; quando a solar disputa a demanda contratada, conta só a maior das duas. Ordenar pela porcentagem da conta dá prioridade a negócios menores, para quem a economia pesa mais.</p>
+        </div>
+      </div>
+      <div class="painel" id="painelRevisao" hidden></div>
+    </section>
+
     <!-- ============================== COMO FUNCIONA ============================== -->
     <section id="aba-sobre" class="aba texto" role="tabpanel">
       <div class="painel">
@@ -231,6 +291,7 @@
           <li><strong>Agenda:</strong> monta a programação que cumpre os prazos e as regras da fábrica gastando menos com energia, e compara com o jeito de hoje (tudo o mais cedo possível).</li>
           <li><strong>Dia a dia:</strong> a equipe escreve o que aconteceu ("o torno 2 quebrou", "o cliente antecipou o P107"). A IA transforma a mensagem em restrições, uma pessoa confere e o plano é refeito sem mexer no que já começou.</li>
           <li><strong>Diagnóstico de engenharia:</strong> modalidade tarifária (inclusive a Tarifa Branca), demanda contratada, fator de carga, quanto de solar instalar considerando corte por limite de injeção e volt-watt, fator de potência e banco de capacitores. Sai um relatório para o engenheiro responsável assinar.</li>
+          <li><strong>Ponte com engenheiros:</strong> a fábrica pede uma avaliação. Engenheiros voluntários, de empresas juniores ou consultores veem a fila de pedidos ordenada pela economia possível e pela especialidade de cada um, conferem em campo o que a ferramenta não sabe e devolvem um parecer com nome e registro.</li>
         </ol>
         <h3>Engenharia por trás</h3>
         <ul>
@@ -246,12 +307,14 @@
           <li><strong>Otimizador:</strong> programação dinâmica no tempo para recolocar todas as etapas de um pedido de uma vez, dentro de uma busca em vizinhança grande com recozimento simulado. A semente é fixa, então o mesmo cenário dá sempre a mesma agenda.</li>
         </ul>
         <h3>Agenda 2030</h3>
-        <p><strong>ODS 7</strong> (energia limpa e acessível): mais autoconsumo da solar e menos energia cortada. <strong>ODS 9</strong> (indústria e inovação): digitaliza o planejamento da pequena indústria. <strong>ODS 12</strong> (consumo responsável): menos picos, instalações sem superdimensionamento e uso da energia no melhor horário. O papel do engenheiro aparece no diagnóstico e no relatório: a ferramenta leva conhecimento de engenharia elétrica a empresas que não têm um engenheiro de energia na equipe.</p>
+        <p><strong>ODS 7</strong> (energia limpa e acessível): mais autoconsumo da solar e menos energia cortada. <strong>ODS 9</strong> (indústria e inovação): digitaliza o planejamento da pequena indústria. <strong>ODS 12</strong> (consumo responsável): menos picos, instalações sem superdimensionamento e uso da energia no melhor horário. As metas mais próximas são a 7.3 (dobrar a melhoria da eficiência energética) e a 9.4 (indústrias mais eficientes e limpas).</p>
+        <p>O papel do engenheiro está na aba Engenheiros: a ferramenta faz a primeira análise, que seria cara para uma pequena indústria contratar, e leva o caso pronto a quem pode validar. Assim o tempo do engenheiro vai para onde a economia é maior e para o que só ele pode fazer: conferir em campo, ajustar e assinar.</p>
         <h3>Limitações do protótipo</h3>
         <ul>
           <li>A conta mensal é estimada a partir de uma semana; o pico real do mês pode ser maior.</li>
           <li>Não modelamos custo de mão de obra noturna, tempo de preparação entre produtos nem estoques intermediários.</li>
           <li>Tarifas, tributos e regras mudam: confira sempre com a fatura e a distribuidora.</li>
+          <li>A fila de pedidos fica no navegador de cada pessoa. Para chegar a outro engenheiro, o pedido vai por arquivo; numa versão completa, a fila seria compartilhada.</li>
         </ul>
       </div>
     </section>
@@ -273,6 +336,7 @@
   <script src="js/modelo.js"></script>
   <script src="js/otimizador.js"></script>
   <script src="js/diagnostico.js"></script>
+  <script src="js/revisao.js"></script>
   <script src="js/ia-local.js"></script>
   <script src="js/ia-nuvem.js"></script>
   <script src="js/eventos.js"></script>
