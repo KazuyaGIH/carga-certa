@@ -36,6 +36,7 @@ Marque **Aprovar** nos itens, menos na demanda: nela, marque **Não aprovar** e 
 Volte à aba **Diagnóstico**: o parecer aparece com o nome do engenheiro, e cada recomendação mostra a decisão. Clique em **Relatório**: "O documento sai com o parecer e o nome dele na assinatura."
 
 ## 5. Fechamento (20 s)
+(Se der tempo, mostre na **Visão geral** o bloco "Impacto na rede e no clima": 2.119 kWh por mês saem da ponta; o CO₂ cai pouco, e a tela diz isso.)
 "ODS 7: mais energia solar aproveitada e mais eficiência, que é a meta 7.3. ODS 9: indústria mais eficiente e digital, meta 9.4. ODS 12: menos picos e instalações sem superdimensionamento. O Carga Certa faz a primeira análise, que uma pequena indústria não conseguiria pagar, e leva o caso pronto ao engenheiro que pode validar. O tempo dele vai para onde a economia é maior."
 
 ---
@@ -57,5 +58,11 @@ Volte à aba **Diagnóstico**: o parecer aparece com o nome do engenheiro, e cad
 **E se a mensagem estiver errada?** O cartão mostra o que a IA entendeu, com campos editáveis, e dá para desfazer o último evento.
 
 **Isso vale para baixa tensão?** Vale. O exemplo da padaria (grupo B3) mostra a Tarifa Branca: trocar de tarifa sem mudar a agenda deixa a conta 19% mais cara; replanejando, ela fica mais barata que a Convencional.
+
+**Gastar menos é o mesmo que poluir menos?** Não, e a ferramenta mostra a diferença (Visão geral, bloco "Impacto na rede e no clima"; tabela completa no fim do Diagnóstico). A agenda muda o horário, quase não muda o total: na metalúrgica o consumo continua em 22.078 kWh/mês. O CO₂ só cai quando cai a energia tirada da rede, aqui porque a fábrica usa mais da própria solar: 15.331 → 14.778 kWh/mês da rede, 590 → 569 kg de CO₂ por mês (fator médio do SIN, 38,5 kg/MWh em 2023, MCTI). O ganho maior é no horário: 2.119 kWh/mês saem da ponta, quando o ONS aciona termelétricas (em julho de 2025 previa déficit de cerca de 4 GW nesse horário), e o consumo vai para o meio do dia, quando sobra solar e eólica (cerca de 20,6% da energia limpa que poderia ter sido gerada em 2025 foi cortada, segundo a Volt Robotics).
+
+**Quem implementa as mudanças? O engenheiro faz tudo sozinho?** Não. Cada recomendação no Diagnóstico tem a linha "quem faz o quê": o dono decide; o encarregado aplica a agenda; eletricista ou instaladora executam; o engenheiro valida e assina a ART; a distribuidora aprova mudança de contrato e conexão da solar. Também mostra o entrave típico: adicional noturno (CLT art. 73), prazos do contrato, investimento da solar, harmônicas antes dos capacitores.
+
+**Quem acompanha depois?** A aba Acompanhamento. A fábrica digita as faturas de cada mês e marca quando começou a seguir o plano; a ferramenta compara a economia real com a prevista e avisa quando é hora de chamar o engenheiro de novo. Na metalúrgica há faturas de exemplo (fictícias): 18,3% real contra 21,4% previsto, e os meses com multa de ultrapassagem aparecem destacados. As faturas vão junto no pedido ao engenheiro.
 
 **Quais as limitações?** A conta é estimada a partir de uma semana, não modelamos custo de mão de obra noturna nem tempo de preparação entre produtos, e as recomendações precisam ser validadas por um engenheiro com medições reais. É justamente para isso que existe a aba Engenheiros.
