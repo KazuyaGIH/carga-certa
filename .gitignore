@@ -1,0 +1,16 @@
+# Sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editores
+.vscode/
+.idea/
+
+# Node (só para testes)
+node_modules/
+
+# Nunca versionar chaves ou cenários reais de clientes
+.env
+*.chave
+cenarios-privados/

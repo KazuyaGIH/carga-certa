@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Carga Certa · T³ch</title>
+  <meta name="description" content="Planejamento de produção que considera o custo da energia: agenda das máquinas, tarifa, picos, geração solar e eventos do dia a dia. Protótipo da equipe T³ch para o Hack@Poli 2026.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230f6b5c'/%3E%3Cpath d='M5 22h5l3-10 4 6 4-10h6' fill='none' stroke='white' stroke-width='2.6' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/estilo.css">
+</head>
+<body>
+  <header class="topo">
+    <div class="marca">
+      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="6"></rect><path d="M5 22h5l3-10 4 6 4-10h6"></path></svg>
+      <div>
+        <h1>Carga Certa</h1>
+        <p>Planejamento de produção que olha a conta de luz · equipe T³ch · Hack@Poli 2026</p>
+      </div>
+    </div>
+    <div class="acoes">
+      <label class="oculto" for="selExemplo">Cenário de exemplo</label>
+      <select id="selExemplo" title="Carregar um cenário de exemplo"></select>
+      <button id="btnOtimizar" class="btn primario">Otimizar agenda</button>
+      <button id="btnAbrir" class="btn" title="Abrir um cenário salvo (.json)">Abrir</button>
+      <button id="btnSalvar" class="btn" title="Baixar o cenário e a agenda (.json)">Salvar</button>
+      <button id="btnRelatorio" class="btn" title="Relatório para imprimir ou salvar em PDF">Relatório</button>
+      <input type="file" id="arquivo" accept=".json,application/json" hidden>
+    </div>
+  </header>
+  <div id="barraProgresso" class="progresso" hidden><div></div></div>
+  <div id="avisoSujo" class="faixa-aviso" hidden>Os dados mudaram desde o último planejamento. <button class="link" id="btnOtimizar2">Otimizar a agenda de novo</button></div>
+
+  <nav class="abas" role="tablist" aria-label="Seções">
+    <button role="tab" data-aba="visao" class="ativa">Visão geral</button>
+    <button role="tab" data-aba="agenda">Agenda</button>
+    <button role="tab" data-aba="eventos">Eventos do dia</button>
+    <button role="tab" data-aba="fabrica">Fábrica</button>
+    <button role="tab" data-aba="energia">Energia e tarifa</button>
+    <button role="tab" data-aba="diagnostico">Diagnóstico</button>
+    <button role="tab" data-aba="sobre">Como funciona</button>
+  </nav>
+
+  <main>
+    <!-- ============================== VISÃO GERAL ============================== -->
+    <section id="aba-visao" class="aba ativa" role="tabpanel">
+      <div class="cabecalho-cenario">
+        <h2 id="nomeCenario">Carregando…</h2>
+        <p id="descCenario"></p>
+      </div>
+      <p id="frase" class="frase"></p>
+      <div id="kpis" class="kpis"></div>
+      <div class="painel">
+        <div class="painel-cab">
+          <h3>Curva de carga da semana</h3>
+          <div class="seg" id="segVisao">
+            <button data-v="otim" class="ativo">Planejado</button>
+            <button data-v="base">Como é hoje</button>
+            <button data-v="comparar">Comparar</button>
+          </div>
+        </div>
+        <div class="grafico alto"><canvas id="gCurva" aria-label="Curva de carga"></canvas></div>
+        <p class="nota legenda-faixas"><span class="faixa-ponta"></span> horário de ponta <span class="faixa-inter"></span> intermediário (Tarifa Branca) · cada ponto é a média de 15 minutos, o mesmo intervalo que a distribuidora usa para medir a demanda.</p>
+      </div>
+      <div class="grade2">
+        <div class="painel">
+          <h3>O que o planejador mudou</h3>
+          <ol id="listaMudancas" class="lista-mudancas"></ol>
+        </div>
+        <div class="painel">
+          <h3>Conta do mês (estimada)</h3>
+          <div class="tabela-rolagem"><table id="tabConta" class="tabela"></table></div>
+          <p class="nota" id="notaConta"></p>
+        </div>
+      </div>
+      <div id="avisos" class="avisos"></div>
+    </section>
+
+    <!-- ============================== AGENDA ============================== -->
+    <section id="aba-agenda" class="aba" role="tabpanel">
+      <div class="painel">
+        <div class="painel-cab">
+          <h3>Agenda das máquinas</h3>
+          <div class="seg" id="segGanttPlano">
+            <button data-p="otim" class="ativo">Planejado</button>
+            <button data-p="base">Como é hoje</button>
+          </div>
+        </div>
+        <div class="seg dias" id="segDias"></div>
+        <div id="gantt" class="gantt"></div>
+        <p class="nota legenda-faixas"><span class="faixa-ponta"></span> horário de ponta <span class="faixa-fechado"></span> fora do turno <span class="faixa-parada"></span> máquina parada <span class="faixa-flex"></span> carga flexível · passe o mouse nas barras para ver detalhes.</p>
+      </div>
+      <div class="painel">
+        <h3>Etapas planejadas</h3>
+        <div class="tabela-rolagem"><table id="tabEtapas" class="tabela"></table></div>
+      </div>
+    </section>
+
+    <!-- ============================== EVENTOS ============================== -->
+    <section id="aba-eventos" class="aba" role="tabpanel">
+      <div class="grade-eventos">
+        <div class="painel">
+          <h3>O que aconteceu na fábrica?</h3>
+          <div class="relogio">
+            <label>Agora (simulado) <input type="datetime-local" id="inpAgora"></label>
+            <span class="relogio-botoes">
+              <button class="btn mini" data-avanca="60">+1 h</button>
+              <button class="btn mini" data-avanca="240">+4 h</button>
+              <button class="btn mini" data-avanca="1440">+1 dia</button>
+            </span>
+          </div>
+          <p class="nota">O que começou antes de "agora" fica como está; o resto pode ser replanejado.</p>
+          <label class="oculto" for="txtEvento">Mensagem</label>
+          <textarea id="txtEvento" rows="4" placeholder="Escreva como falaria no grupo da fábrica. Ex.: O torno 2 quebrou e só volta amanhã às 14h. O cliente antecipou o P107 para quinta às 10h."></textarea>
+          <div class="chips" id="chipsExemplos"></div>
+          <div class="motor">
+            <span>Interpretar com</span>
+            <label><input type="radio" name="motor" value="local" checked> IA local (sem internet)</label>
+            <label><input type="radio" name="motor" value="gemini"> Gemini</label>
+            <label><input type="radio" name="motor" value="claude"> Claude</label>
+          </div>
+          <div class="chave" id="boxChave" hidden>
+            <label>Chave da API <input type="password" id="inpChave" autocomplete="off" spellcheck="false" placeholder="cole a chave aqui"></label>
+            <label id="rotModelo">Modelo <input type="text" id="inpModelo" spellcheck="false"></label>
+            <label class="check"><input type="checkbox" id="chkLembrar"> lembrar a chave neste navegador</label>
+            <p class="nota" id="notaChave"></p>
+          </div>
+          <div class="linha-botoes"><button class="btn primario" id="btnInterpretar">Interpretar</button></div>
+          <div id="cartoes"></div>
+          <div class="linha-botoes" id="acoesCartoes" hidden>
+            <button class="btn primario" id="btnAplicar">Aplicar e replanejar</button>
+            <button class="btn" id="btnDescartar">Descartar</button>
+          </div>
+        </div>
+        <div>
+          <div class="painel">
+            <h3>Impacto do último evento</h3>
+            <div id="impacto"><p class="vazio">Nenhum evento aplicado ainda.</p></div>
+          </div>
+          <div class="painel">
+            <div class="painel-cab"><h3>Histórico</h3><button class="btn mini" id="btnDesfazer" disabled>Desfazer o último</button></div>
+            <ol id="historico" class="historico"></ol>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================== FÁBRICA ============================== -->
+    <section id="aba-fabrica" class="aba" role="tabpanel">
+      <div class="painel"><h3>Empresa e semana</h3><div class="form" id="formGeral"></div></div>
+      <div class="painel"><h3>Máquinas</h3><p class="nota">Unidades = quantas máquinas iguais existem. Horário no formato <code>seg-sex 06:00-22:00; sab 06:00-14:00</code> ou <code>todos 00:00-24:00</code>.</p><div id="edMaquinas"></div></div>
+      <div class="painel"><h3>Pedidos</h3><p class="nota">Etapas em ordem, cada uma com o ID da máquina e as horas: <code>CORTE 2 &gt; TORNO 6 &gt; FORNO 4</code>.</p><div id="edPedidos"></div></div>
+      <div class="painel"><h3>Cargas fixas</h3><p class="nota">Iluminação, conforto térmico, compressor de base, escritório: ligam no horário indicado e não mudam.</p><div id="edFixas"></div></div>
+      <div class="painel"><h3>Cargas flexíveis</h3><p class="nota">Precisam de uma energia por dia, mas o horário pode mudar dentro da janela (recarga de empilhadeira, bombeamento, aquecimento com reservatório). "Contínua" = depois de ligar, vai até o fim.</p><div id="edFlex"></div></div>
+      <div class="painel"><h3>Paradas de máquina</h3><div id="edParadas"></div></div>
+      <div class="grade2">
+        <div class="painel"><h3>Limites de demanda pedidos</h3><div id="edLimites"></div></div>
+        <div class="painel"><h3>Turnos diferentes</h3><div id="edTurnos"></div></div>
+      </div>
+    </section>
+
+    <!-- ============================== ENERGIA ============================== -->
+    <section id="aba-energia" class="aba" role="tabpanel">
+      <div class="grade2">
+        <div class="painel"><h3>Tarifa</h3><div class="form" id="formTarifa"></div><div class="tabela-rolagem" id="tabPrecos"></div></div>
+        <div class="painel"><h3>Geração solar e rede</h3><div class="form" id="formSolar"></div><h4>Céu previsto em cada dia</h4><div id="formNeb" class="neb"></div></div>
+      </div>
+      <div class="painel"><h3>Objetivo do planejamento</h3><div class="form" id="formObjetivo"></div></div>
+    </section>
+
+    <!-- ============================== DIAGNÓSTICO ============================== -->
+    <section id="aba-diagnostico" class="aba" role="tabpanel">
+      <div class="painel">
+        <div class="painel-cab">
+          <h3>Recomendações de engenharia</h3>
+          <button class="btn primario" id="btnDiag">Comparar tarifas e dimensionar a solar</button>
+        </div>
+        <ul id="listaRecom" class="recom"></ul>
+        <p class="nota">As recomendações servem de ponto de partida para o engenheiro responsável validar com medições reais e com as regras da distribuidora.</p>
+      </div>
+      <div class="painel">
+        <h3>Validação por um engenheiro</h3>
+        <p>Antes de mudar o contrato de demanda, trocar de tarifa ou comprar equipamentos, o diagnóstico precisa ser conferido por um engenheiro eletricista. A pequena indústria quase nunca tem um na equipe; o Carga Certa prepara o material para um engenheiro parceiro (empresa júnior, consultor, professor ou voluntário) revisar em poucos minutos.</p>
+        <ol class="passos">
+          <li>Gere o <strong>relatório</strong> e salve em PDF.</li>
+          <li>Escreva para o engenheiro com o resumo abaixo e anexe o PDF. Ele confere, ajusta e assina.</li>
+        </ol>
+        <div class="form">
+          <label for="inpEngenheiro">E-mail do engenheiro (opcional)<input type="email" id="inpEngenheiro" placeholder="nome@exemplo.com" autocomplete="off"></label>
+        </div>
+        <div class="linha-botoes">
+          <button class="btn" id="btnRelatorio2">Gerar relatório</button>
+          <button class="btn primario" id="btnEmailEng">Escrever e-mail</button>
+          <button class="btn" id="btnCopiarResumo">Copiar resumo</button>
+        </div>
+      </div>
+      <div class="grade2">
+        <div class="painel">
+          <h3>Modalidade tarifária</h3>
+          <div class="grafico"><canvas id="gModal"></canvas></div>
+          <div class="tabela-rolagem"><table id="tabModal" class="tabela"></table></div>
+          <p class="nota" id="notaModal"></p>
+        </div>
+        <div class="painel">
+          <h3>Demanda contratada</h3>
+          <div class="grafico"><canvas id="gDemanda"></canvas></div>
+          <div id="txtDemanda"></div>
+        </div>
+      </div>
+      <div class="painel">
+        <h3>Geração solar: quanto instalar</h3>
+        <div class="grade2 solar">
+          <div class="grafico alto"><canvas id="gSolar"></canvas></div>
+          <div class="tabela-rolagem"><table id="tabSolar" class="tabela"></table></div>
+        </div>
+        <p class="nota" id="notaSolar"></p>
+      </div>
+      <div class="painel">
+        <h3>Fator de carga e fator de potência</h3>
+        <div id="txtFC"></div>
+      </div>
+    </section>
+
+    <!-- ============================== COMO FUNCIONA ============================== -->
+    <section id="aba-sobre" class="aba texto" role="tabpanel">
+      <div class="painel">
+        <h3>O problema</h3>
+        <p>Pequenas indústrias gastam energia com máquinas, iluminação e conforto térmico. A conta depende do <strong>horário</strong> em que a energia é usada (posto de ponta, intermediário e fora de ponta) e, no grupo A, também do <strong>maior pico de 15 minutos do mês</strong> (demanda), com multa quando ele passa da demanda contratada. Sem planejamento, as máquinas ligam todas juntas no fim da tarde, a conta sobe e a instalação acaba superdimensionada por causa dos picos.</p>
+        <h3>O que o Carga Certa faz</h3>
+        <ol>
+          <li><strong>Entrada:</strong> pedidos com etapas e prazos, máquinas (potência, unidades e turnos), cargas fixas e flexíveis, tarifa da distribuidora e geração solar própria.</li>
+          <li><strong>Agenda:</strong> monta a programação que cumpre os prazos e as regras da fábrica gastando menos com energia, e compara com o jeito de hoje (tudo o mais cedo possível).</li>
+          <li><strong>Dia a dia:</strong> a equipe escreve o que aconteceu ("o torno 2 quebrou", "o cliente antecipou o P107"). A IA transforma a mensagem em restrições, uma pessoa confere e o plano é refeito sem mexer no que já começou.</li>
+          <li><strong>Diagnóstico de engenharia:</strong> modalidade tarifária (inclusive a Tarifa Branca), demanda contratada, fator de carga, quanto de solar instalar considerando corte por limite de injeção e volt-watt, fator de potência e banco de capacitores. Sai um relatório para o engenheiro responsável assinar.</li>
+        </ol>
+        <h3>Engenharia por trás</h3>
+        <ul>
+          <li><strong>Tarifas:</strong> valores homologados pela ANEEL para a Enel SP (REH nº 3.596/2026), sem tributos; os tributos entram como percentual "por dentro". Demanda faturada = maior entre medida e contratada; acima de 105% da contratada, o excedente paga 2× a tarifa de demanda (REN 1.000/2021).</li>
+          <li><strong>Geração solar:</strong> posição do Sol (NOAA) e céu claro de Haurwitz, multiplicados pelo céu previsto do dia. A energia injetada vale a tarifa menos 60% do Fio B (Lei 14.300/2022, regra de 2026).</li>
+          <li><strong>Curtailment e volt-watt:</strong> a tensão no ponto de conexão sobe com a exportação (ΔV ≈ R·P/V²). Acima de V1 o inversor reduz a potência até zerar em V2; acima do limite de injeção a geração é cortada. Ligar cargas ao meio-dia reduz a exportação e recupera essa energia.</li>
+          <li><strong>Fator de potência:</strong> com a solar, a fábrica puxa menos kW da rede mas os mesmos kvar, então o fator de potência medido cai. O diagnóstico calcula o reativo excedente (referência 0,92) e o banco de capacitores automático.</li>
+        </ul>
+        <h3>Inteligência artificial e otimização</h3>
+        <ul>
+          <li><strong>IA local:</strong> classificador Naive Bayes treinado no navegador com frases de exemplo, mais extração de máquina, pedido, datas, horários e quantidades. Funciona sem internet.</li>
+          <li><strong>IA na nuvem (opcional):</strong> Gemini (plano gratuito do Google AI Studio) ou Claude (API da Anthropic), com resposta em JSON validada. A chave fica só no seu navegador.</li>
+          <li><strong>Otimizador:</strong> programação dinâmica no tempo para recolocar todas as etapas de um pedido de uma vez, dentro de uma busca em vizinhança grande com recozimento simulado. A semente é fixa, então o mesmo cenário dá sempre a mesma agenda.</li>
+        </ul>
+        <h3>Agenda 2030</h3>
+        <p><strong>ODS 7</strong> (energia limpa e acessível): mais autoconsumo da solar e menos energia cortada. <strong>ODS 9</strong> (indústria e inovação): digitaliza o planejamento da pequena indústria. <strong>ODS 12</strong> (consumo responsável): menos picos, instalações sem superdimensionamento e uso da energia no melhor horário. O papel do engenheiro aparece no diagnóstico e no relatório: a ferramenta leva conhecimento de engenharia elétrica a empresas que não têm um engenheiro de energia na equipe.</p>
+        <h3>Limitações do protótipo</h3>
+        <ul>
+          <li>A conta mensal é estimada a partir de uma semana; o pico real do mês pode ser maior.</li>
+          <li>Não modelamos custo de mão de obra noturna, tempo de preparação entre produtos nem estoques intermediários.</li>
+          <li>Tarifas, tributos e regras mudam: confira sempre com a fatura e a distribuidora.</li>
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <footer class="rodape">Carga Certa · protótipo da equipe T³ch para o Hack@Poli 2026 · ODS 7, 9 e 12 · Tarifas: ANEEL REH nº 3.596/2026 (Enel SP). Os valores são estimativas.</footer>
+
+  <div id="relatorio" class="relatorio" aria-hidden="true"></div>
+  <div id="dica" class="dica" hidden></div>
+  <div id="toast" class="toast" hidden></div>
+  <div id="confirmacao" class="confirmacao" hidden>
+    <div class="confirmacao-caixa"><p id="confirmacaoTexto"></p><div class="linha-botoes"><button class="btn primario" id="confirmacaoSim">Continuar</button><button class="btn" id="confirmacaoNao">Cancelar</button></div></div>
+  </div>
+
+  <script src="vendor/chart.umd.js"></script>
+  <script src="js/util.js"></script>
+  <script src="js/tarifas.js"></script>
+  <script src="js/solar.js"></script>
+  <script src="js/modelo.js"></script>
+  <script src="js/otimizador.js"></script>
+  <script src="js/diagnostico.js"></script>
+  <script src="js/ia-local.js"></script>
+  <script src="js/ia-nuvem.js"></script>
+  <script src="js/eventos.js"></script>
+  <script src="js/graficos.js"></script>
+  <script src="dados/exemplos.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
