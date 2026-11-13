@@ -165,8 +165,25 @@
     excecoesTurno: [],
   };
 
+  // Faturas FICTÍCIAS, só para mostrar a aba Acompanhamento: cinco meses antes de seguir o plano
+  // (com multa de ultrapassagem em três deles) e três meses depois.
+  const faturasMetalurgica = {
+    inicioPlano: '2026-08',
+    exemplo: true,
+    faturas: [
+      { mes: '2026-03', kWh: 15640, demandaKW: 104, valor: 15180 },
+      { mes: '2026-04', kWh: 15210, demandaKW: 109, valor: 15760 },
+      { mes: '2026-05', kWh: 14980, demandaKW: 103, valor: 14920 },
+      { mes: '2026-06', kWh: 15420, demandaKW: 108, valor: 15540 },
+      { mes: '2026-07', kWh: 15890, demandaKW: 111, valor: 15980 },
+      { mes: '2026-08', kWh: 15050, demandaKW: 66, valor: 13240 },
+      { mes: '2026-09', kWh: 14820, demandaKW: 59, valor: 12410 },
+      { mes: '2026-10', kWh: 14690, demandaKW: 58, valor: 12290 },
+    ],
+  };
+
   CC.EXEMPLOS = {
-    metalurgica: { titulo: 'Metalúrgica (A4 Verde, com solar)', cenario: metalurgica },
+    metalurgica: { titulo: 'Metalúrgica (A4 Verde, com solar)', cenario: metalurgica, acompanhamentoExemplo: faturasMetalurgica },
     padaria: { titulo: 'Padaria industrial (B3, baixa tensão)', cenario: padaria },
   };
 })(typeof window !== 'undefined' ? window : globalThis);
