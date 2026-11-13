@@ -206,6 +206,21 @@ main { max-width: 1320px; margin: 0 auto; padding: 20px 24px 40px; }
 .numeros div { border: 1px solid var(--borda); border-radius: 6px; padding: 8px 10px; }
 .numeros span { display: block; color: var(--sutil); font-size: 12px; }
 .numeros strong { font-size: 18px; }
+.numeros small { display: block; color: var(--sutil); font-size: 12px; margin-top: 2px; }
+
+/* ---------- impacto, quem faz o quê e acompanhamento ---------- */
+.impacto-textos { margin: 4px 0 0; padding-left: 20px; max-width: 1040px; }
+.impacto-textos li { margin-bottom: 6px; }
+.quem-faz { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 4px 14px; margin: 6px 0 2px; padding: 6px 10px; border-left: 3px solid var(--acento); background: #f6f9f8; border-radius: 0 6px 6px 0; font-size: 13px; color: var(--texto); }
+.quem-faz b { color: var(--acento-escuro); font-weight: 650; }
+.quem-faz .qf-atencao b { color: var(--alerta); }
+.item-rev .quem-faz { margin: 0 0 10px; }
+.aviso-acomp { border: 1px solid var(--borda); border-left: 4px solid var(--borda-forte); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; }
+.aviso-acomp.ok { border-left-color: var(--ok); background: #f3faf5; }
+.aviso-acomp.alerta { border-left-color: var(--alerta); background: var(--alerta-claro); }
+.aviso-acomp.erro { border-left-color: var(--perigo); background: var(--perigo-claro); }
+.faixa-exemplo { margin: 0 0 12px; padding: 6px 12px; background: var(--alerta-claro); color: var(--alerta); border-radius: 6px; font-size: 14px; }
+#aba-acompanhamento h4 { margin: 16px 0 8px; }
 
 /* ---------- avaliação por engenheiro ---------- */
 .form .largo { grid-column: 1 / -1; }
