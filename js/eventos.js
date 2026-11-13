@@ -77,6 +77,7 @@
     switch (ev.tipo) {
       case 'maquina_indisponivel': case 'maquina_disponivel':
         if (!(cen.maquinas || []).some((m) => m.id === ev.maquina)) p.push('Escolha a máquina.');
+        if (!Number.isFinite(U.parseDT(ev.inicio))) p.push(ev.tipo === 'maquina_disponivel' ? 'Informe quando a máquina volta.' : 'Informe o início da parada.');
         if (ev.tipo === 'maquina_indisponivel' && !(U.parseDT(ev.fim) > U.parseDT(ev.inicio))) p.push('O fim precisa ser depois do início.');
         break;
       case 'mudar_prazo': if (!temPed(ev.pedido)) p.push('Escolha o pedido.'); if (!Number.isFinite(U.parseDT(ev.prazo))) p.push('Informe o prazo.'); break;
@@ -124,16 +125,28 @@
           cen.indisponibilidades.push({ id: 'PARADA-' + (seq++), maquina: ev.maquina, unidade: +ev.unidade || 0, inicio: ev.inicio, fim: ev.fim, motivo: ev.texto || '' });
           break;
         case 'maquina_disponivel': {
+          // Encerra só as paradas que estão acontecendo nesse instante; paradas futuras (manutenção marcada) ficam.
           const t = U.parseDT(ev.inicio);
-          cen.indisponibilidades = cen.indisponibilidades.filter((ind) => {
-            if (ind.maquina !== ev.maquina) return true;
-            if (ev.unidade && ind.unidade && +ind.unidade !== +ev.unidade) return true;
-            const a = U.parseDT(ind.inicio), b = U.parseDT(ind.fim);
-            if (b <= t) return true;
-            if (a >= t) return false;
-            ind.fim = U.fmtDT(t);
-            return true;
-          });
+          const uEv = +ev.unidade || 0;
+          const maq = (cen.maquinas || []).find((m) => m.id === ev.maquina);
+          const nUn = maq ? Math.max(1, Math.round(+maq.unidades || 1)) : 1;
+          const novas = [];
+          let mexeu = false;
+          for (const ind of cen.indisponibilidades) {
+            const a = U.parseDT(ind.inicio), b = U.parseDT(ind.fim), uInd = +ind.unidade || 0;
+            if (ind.maquina !== ev.maquina || (uEv && uInd && uInd !== uEv) || !(a <= t && t < b)) { novas.push(ind); continue; }
+            mexeu = true;
+            if (uEv && !uInd && nUn > 1) { // parada de todas as unidades: só a unidade liberada volta
+              for (let u = 1; u <= nUn; u++) {
+                if (u !== uEv) novas.push(Object.assign({}, ind, { id: `${ind.id || 'PARADA'}-u${u}`, unidade: u }));
+                else if (t > a) novas.push(Object.assign({}, ind, { id: `${ind.id || 'PARADA'}-u${u}`, unidade: u, fim: U.fmtDT(t) }));
+              }
+              continue;
+            }
+            if (t > a) novas.push(Object.assign({}, ind, { fim: U.fmtDT(t) }));
+          }
+          cen.indisponibilidades = novas;
+          if (!mexeu) notas.push('Não havia parada dessa máquina em andamento nesse horário.');
           break;
         }
         case 'mudar_prazo': {

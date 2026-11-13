@@ -113,6 +113,7 @@
       for (const o of ordem) {
         const s = plano.ini[o], u = plano.uni[o];
         if (this.livre(o, s, u)) { this.colocar(o, s, u); continue; }
+        if (s < inst.agoraSlot) continue; // já começou: não muda de unidade no passado (vai recomeçar)
         const M = inst.maquinas[inst.ops[o].maq];
         for (let uu = 0; uu < M.unidades; uu++) if (this.livre(o, s, uu)) { this.colocar(o, s, uu); break; }
       }

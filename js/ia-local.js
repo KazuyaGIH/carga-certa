@@ -154,6 +154,8 @@
     let s = ' ' + U.normalizar(texto) + ' ';
     s = s.replace(/\bp\s?-?\s?\d{2,5}\b/g, ' _pedido_ ');
     s = s.replace(/\b\d{1,2}\/\d{1,2}(\/\d{2,4})?\b/g, ' _data_ ');
+    s = s.replace(/\b(das|de|entre|desde)\s+\d{1,2}\s+(as|a|e|ate)\s+\d{1,2}\b(?!\s*(?:kw|%|pecas|unidades|un\b|dias?|horas?|minutos?))/g, ' $1 _hora_ $2 _hora_ ');
+    s = s.replace(/\bas\s+\d{1,2}\b(?!\s*(?:h|:|kw|%|pecas|unidades|un\b|dias?|horas?|minutos?))/g, ' as _hora_ ');
     s = s.replace(/\b\d{1,2}\s?(h|:)\s?\d{0,2}\b/g, ' _hora_ ');
     s = s.replace(/\b\d+([.,]\d+)?\s?%/g, ' _pct_ ');
     s = s.replace(/\b\d+([.,]\d+)?\s?kw\b/g, ' _kw_ ');
@@ -253,24 +255,31 @@
     const dur = [], marcasDia = [], marcasHora = [], periodos = [];
     let m;
 
-    // Durações e "daqui a"
-    const reDur = /\b(por|durante|em|daqui a|dentro de)\s+(?:mais\s+)?(\d+(?:[.,]\d+)?|uma?|duas|dois|tres|quatro|cinco|seis|meia)\s*(h\b|hs\b|hrs?\b|horas?\b|min\b|minutos?\b|dias?\b)/g;
+    // Durações e "daqui a" ("por 3 horas", "por 1h30", "volta em 2 horas")
+    const reDurHM = /\b(por|durante|em|daqui a|dentro de)\s+(?:mais\s+)?(\d{1,2})\s?h\s?(\d{2})\b/g;
+    while ((m = reDurHM.exec(n))) dur.push({ pos: m.index, len: m[0].length, minutos: +m[2] * 60 + +m[3], tipo: m[1] });
+    for (const d of dur) mascarar(d.pos, d.pos + d.len);
+    const reDur = /\b(por|durante|em|daqui a|dentro de|parad[oa]s?|fora|desligad[oa]s?|manutencao)\s+(?:mais\s+)?(\d+(?:[.,]\d+)?|uma?|duas|dois|tres|quatro|cinco|seis|meia)\s*(h\b|hs\b|hrs?\b|horas?\b|min\b|minutos?\b|dias?\b)/g;
     while ((m = reDur.exec(n))) {
       const v = valorNum(m[2]);
       const mult = /^d/.test(m[3]) ? 1440 : /^min/.test(m[3]) ? 1 : 60;
-      dur.push({ pos: m.index, minutos: v * mult, tipo: m[1] });
+      dur.push({ pos: m.index, len: m[0].length, minutos: v * mult, tipo: m[1] });
     }
-    for (const d of dur) { const r = new RegExp(reDur.source); const mm = r.exec(n.slice(d.pos)); if (mm) mascarar(d.pos, d.pos + mm[0].length); }
+    for (const d of dur) mascarar(d.pos, d.pos + d.len);
+    dur.sort((a, b) => a.pos - b.pos);
 
-    // Dias
+    // Dias. Um dia da semana igual a hoje ("segunda", dito numa segunda) vale a semana que vem,
+    // a não ser que venha com um horário que ainda não passou.
+    const avisos = [];
     const addDia = (pos, end, inicio, extra) => marcasDia.push(Object.assign({ pos, end, inicio, usado: false }, extra || {}));
     const reRel = /\b(depois de amanha|amanha|hoje)\b/g;
     while ((m = reRel.exec(n))) addDia(m.index, m.index + m[0].length, hoje + 1440 * (m[1] === 'hoje' ? 0 : m[1] === 'amanha' ? 1 : 2));
     const reSem = /\b(proxima\s+|que\s+vem\s+)?(segunda|terca|quarta|quinta|sexta|sabado|domingo)(?:[- ]feira)?(\s+que\s+vem)?\b/g;
     while ((m = reSem.exec(n))) {
       let delta = (DIAS_SEMANA[m[2]] - dowHoje + 7) % 7;
-      if (delta === 0 && (m[1] || m[3])) delta = 7;
-      addDia(m.index, m.index + m[0].length, hoje + delta * 1440);
+      const explicito = !!(m[1] || m[3]);
+      if (delta === 0 && explicito) delta = 7;
+      addDia(m.index, m.index + m[0].length, hoje + delta * 1440, { hojeSemana: delta === 0, nome: m[2] });
     }
     const reData = /\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/g;
     while ((m = reData.exec(n))) {
@@ -297,12 +306,23 @@
     const addHora = (pos, end, minutos) => marcasHora.push({ pos, end, minutos });
     const reMeio = /\b(meio[- ]dia|meia[- ]noite)\b/g;
     while ((m = reMeio.exec(n))) { addHora(m.index, m.index + m[0].length, /meio/.test(m[1]) ? 720 : 1440); mascarar(m.index, m.index + m[0].length); }
-    const reH = /\b(\d{1,2})\s?(?:h|:|horas?\b)\s?(\d{2})?(?:\s*(?:da|de)\s+(manha|tarde|noite|madrugada))?/g;
+    // "14h", "14h30", "14:30", "14 horas" (mas não "15 hastes")
+    const reH = /\b(\d{1,2})(?:\s?h(?:s|rs?)?(\d{2})?\b|:(\d{2})\b|\s?horas?\b)(?:\s*(?:da|de)\s+(manha|tarde|noite|madrugada))?/g;
     while ((m = reH.exec(n))) {
-      let h = +m[1]; const mi = m[2] ? +m[2] : 0;
+      let h = +m[1]; const mi = m[2] ? +m[2] : m[3] ? +m[3] : 0;
       if (h > 24 || mi > 59) continue;
-      if ((m[3] === 'tarde' || m[3] === 'noite') && h < 12) h += 12;
+      if ((m[4] === 'tarde' || m[4] === 'noite') && h < 12) h += 12;
       addHora(m.index, m.index + m[0].length, h * 60 + mi);
+    }
+    // Faixas sem "h": "das 8 às 12", "entre 17 e 20"
+    const reFaixaN = /\b(das|de|entre|desde)\s+(\d{1,2})\s+(as|a|e|ate)\s+(\d{1,2})\b(?!\s*(?:kw|%|pecas|unidades|un\b|dias?|horas?|minutos?|vezes))/g;
+    while ((m = reFaixaN.exec(n))) {
+      const h1 = +m[2], h2 = +m[4];
+      if (h1 > 24 || h2 > 24) continue;
+      const p1 = m.index + m[1].length + m[0].slice(m[1].length).search(/\d/);
+      const p2 = m.index + m[0].length - m[4].length;
+      if (!marcasHora.some((x) => p1 >= x.pos && p1 < x.end)) addHora(p1, p1 + m[2].length, h1 * 60);
+      if (!marcasHora.some((x) => p2 >= x.pos && p2 < x.end)) addHora(p2, p2 + m[4].length, h2 * 60);
     }
     const reDaTarde = /\b(?:as\s+)?(\d{1,2})\s+(?:da|de)\s+(manha|tarde|noite|madrugada)\b/g;
     while ((m = reDaTarde.exec(n))) {
@@ -333,7 +353,7 @@
     const papelAntes = (pos) => {
       const antes = n.slice(Math.max(0, pos - 26), pos);
       if (/(ate|volta(r|ra|m)?|retorna(r|ra)?|religa(r)?|termina(r|ra)?|fim|liberad[oa]|pronto|previsao de volta|chega(ra|r)?|ate as)\s*(a|as|o|ao|na|no|de|do|da|para|pra|la|mais ou menos)?\s*$/.test(antes)) return 'fim';
-      if (/(das|desde|a partir d[eoa]s?|a partir|comeca(r|ndo)?|inicia(r|ndo)?|entre|abre|abrir)\s*(as|a|o|hoje|amanha|de)?\s*$/.test(antes)) return 'inicio';
+      if (/(das|desde|a partir d[eoa]s?|a partir|comeca(r|ndo)?|inicia(r|ndo)?|entre|abre|abrir|parou|quebrou|travou|desligou|desarmou|pifou|queimou)\s*(as|a|o|hoje|amanha|de)?\s*$/.test(antes)) return 'inicio';
       if (/\bde\s*$/.test(antes)) return 'inicio?';
       return null;
     };
@@ -349,31 +369,36 @@
       let dia = null;
       for (const d of marcasDia) if (d.pos < h.pos) dia = d;
       if (!dia) for (const d of marcasDia) if (d.pos > h.pos && d.pos - h.end < 30) { dia = d; break; }
-      if (dia) dia.usado = true;
       if (!papel && dia && papelAntes(dia.pos) && papelAntes(dia.pos) !== 'inicio?') papel = papelAntes(dia.pos);
-      let min = (dia ? dia.inicio : hoje) + h.minutos;
-      if (!dia && min < agora - 30) min += 1440; // "volta às 9h" dito à tarde = amanhã
+      let baseDia = dia ? dia.inicio : hoje;
+      if (dia && dia.hojeSemana && baseDia + h.minutos < agora - 30) baseDia += 7 * 1440; // "segunda às 9h" dito na segunda à tarde
+      let min = baseDia + h.minutos;
+      // "volta às 9h" dito à tarde = amanhã; um início que já passou ("desde as 8h") fica hoje
+      if (!dia && min < agora - 30 && papel !== 'inicio') min += 1440;
+      if (dia) { dia.usado = true; dia.resolvido = baseDia; }
       instantes.push({ min, papel, temHora: true, temDia: !!dia, pos: h.pos });
     }
     for (const d of marcasDia) {
+      if (d.resolvido == null) d.resolvido = d.inicio + (d.hojeSemana ? 7 * 1440 : 0);
+      if (d.hojeSemana && d.resolvido > d.inicio) avisos.push(`Entendi "${d.nome}" como a próxima ${d.nome} (${U.fmtDia(d.resolvido)}), porque hoje já é ${d.nome}.`);
       if (d.usado) continue;
       let papel = papelAntes(d.pos);
       if (papel === 'inicio?') papel = 'inicio';
-      instantes.push({ min: d.inicio, papel, temHora: false, temDia: true, pos: d.pos, diaInteiro: true });
+      instantes.push({ min: d.resolvido, papel, temHora: false, temDia: true, pos: d.pos, diaInteiro: true });
     }
     instantes.sort((a, b) => a.pos - b.pos);
 
     const faixas = periodos.map((p) => {
       let dia = null;
       for (const d of marcasDia) if (Math.abs(d.pos - p.pos) < 40) { dia = d; break; }
-      const base = dia ? dia.inicio : hoje;
-      if (p.faixa === 'ponta') return { ponta: true, base };
-      return { ini: base + p.faixa[0], fim: base + p.faixa[1], base };
+      const base = dia ? dia.resolvido : hoje;
+      if (p.faixa === 'ponta') return { ponta: true, base, pos: p.pos };
+      return { ini: base + p.faixa[0], fim: base + p.faixa[1], base, pos: p.pos };
     });
 
     const dias = [];
-    for (const d of marcasDia) for (const x of d.multi || [d.inicio]) if (!dias.includes(x)) dias.push(x);
-    return { instantes, faixas, duracoes: dur, dias, semanaToda };
+    for (const d of marcasDia) for (const x of d.multi || [d.resolvido]) if (!dias.includes(x)) dias.push(x);
+    return { instantes, faixas, duracoes: dur, dias, semanaToda, avisos };
   };
 
   // ------------------------------------------------------------------ números
@@ -387,6 +412,7 @@
     while ((m = reP.exec(limpo))) r.pct = U.numeroBR(m[1]) / 100;
     const reN = /\b(\d+(?:[.,]\d+)?)\b(?!\s?(?:kw|%|dias?|horas?|h\b|min))/g;
     while ((m = reN.exec(limpo))) r.numeros.push({ v: U.numeroBR(m[1]), pos: m.index });
+    r.limpo = limpo;
     return r;
   }
 
@@ -403,6 +429,8 @@
     }
     return Number.isFinite(ini) ? { ini: fmtHM(ini), fim: fmtHM(fim) } : { ini: '06:00', fim: '22:00' };
   }
+  /** Minuto do dia em que o turno normal começa ("volta quinta" = volta no começo do turno de quinta). */
+  const inicioDoTurno = (cen, diaMin) => U.parseHora(turnoPadrao(cen, diaMin).ini) || 0;
 
   function acharPedidoModelo(n, cen, ids) {
     if (ids.length) return ids[0];
@@ -433,20 +461,34 @@
         if (!maq) ev.avisos.push('Não identifiquei a máquina. Escolha na lista.');
         ev.unidade = maq ? (maq.unidade || (maq.unidades > 1 ? 1 : null)) : null;
         if (maq && maq.unidades > 1 && !maq.unidade) ev.avisos.push(`A máquina tem ${maq.unidades} unidades; considerei a unidade 1.`);
-        const f0 = tempo.faixas.find((f) => !f.ponta);
-        let ini = primeiro('inicio') ? primeiro('inicio').min : f0 ? f0.ini : agora;
-        if (ini < agora && !primeiro('inicio')) ini = agora;
+        const faixas = tempo.faixas.filter((f) => !f.ponta);
+        const temVolta = /volta|retorn|religa|\bate\b|chega|previs|conserto|liberad/.test(n);
         let fimI = primeiro('fim');
         if (!fimI) {
           const neutros = tempo.instantes.filter((i) => !i.papel);
-          if (neutros.length && /volta|retorn|religa|\bate\b|chega|previs|conserto|so amanha|liberad/.test(n)) fimI = neutros[neutros.length - 1];
+          if (neutros.length && temVolta) fimI = neutros[neutros.length - 1];
         }
+        // Um período do mesmo dia da volta ("só volta amanhã de manhã") diz QUANDO a máquina volta;
+        // um período sem volta ("em manutenção hoje à tarde") é o próprio período da parada.
+        let fxVolta = null;
+        if (fimI && fimI.diaInteiro) fxVolta = faixas.find((f) => f.base === fimI.min) || null;
+        else if (!fimI && temVolta && faixas.length && !tempo.instantes.some((i) => i.temHora)) fxVolta = faixas[faixas.length - 1];
+        const fxParada = faixas.find((f) => f !== fxVolta) || null;
+        const iniI = primeiro('inicio');
+        let ini = iniI ? iniI.min : fxParada ? fxParada.ini : agora;
+        if (!iniI && ini < agora) ini = agora;
+        const base = Math.max(ini, agora);
+        const dur = tempo.duracoes[0];
         let fim;
-        if (fimI) fim = fimI.diaInteiro ? fimI.min + 1440 : fimI.min;
-        else if (tempo.duracoes.length && tempo.duracoes[0].tipo !== 'em') fim = ini + tempo.duracoes[0].minutos;
-        else if (f0) fim = f0.fim;
-        else { fim = ini + 240; ev.avisos.push('Não achei quando a máquina volta; estimei 4 horas.'); }
-        if (fim <= ini) fim = ini + 240;
+        if (fxVolta) fim = fxVolta.ini;
+        else if (fimI) fim = fimI.diaInteiro ? fimI.min + inicioDoTurno(cen, fimI.min) : fimI.min;
+        else if (dur) fim = base + dur.minutos;
+        else if (fxParada) {
+          fim = fxParada.fim;
+          if (fxParada.fim <= agora) { ini = fxParada.ini; ev.avisos.push('Esse período já passou; confira o dia.'); }
+        } else { fim = base + 240; ev.avisos.push('Não achei quando a máquina volta; estimei 4 horas.'); }
+        if (fim <= ini && fimI && fimI.temHora && !fimI.temDia) fim += 1440; // "das 22h às 6h"
+        if (fim <= ini) { fim = base + 240; ev.avisos.push('O fim ficou antes do início; estimei 4 horas.'); }
         ev.inicio = fmt(ini); ev.fim = fmt(fim);
         break;
       }
@@ -503,14 +545,27 @@
         if (!ev.pedido) ev.avisos.push('Não identifiquei o pedido.');
         const p = (cen.pedidos || []).find((x) => x.id === ev.pedido);
         const atual = p ? +p.quantidade : NaN;
+        // "para 300" / "agora é de 300" / "vão ser só 50" = valor final; "aumentou em 50" / "acréscimo de 30" = soma
+        const pegar = (re) => { const m = re.exec(qt.limpo); return m ? U.numeroBR(m[1]) : null; };
+        let absoluto = pegar(/\bpara\s+(\d+(?:[.,]\d+)?)\b(?!\s?%)/);
+        if (absoluto == null) absoluto = pegar(/\b(?:agora e de|agora sao|agora e|vai ter|vao ter|vao ser so|vao ser|serao|sera de|so)\s+(\d+(?:[.,]\d+)?)\b(?!\s?%)/);
+        const aumenta = /aument|acresc|adicion|somar|\bmais\b/.test(n);
+        const diminui = /reduz|diminu|cort|\bmenos\b|caiu|baix/.test(n);
         let nova = null;
         if (/metade/.test(n)) nova = atual * 0.5;
         else if (/dobr/.test(n)) nova = atual * 2;
         else if (/triplic/.test(n)) nova = atual * 3;
-        else if (qt.pct != null && Number.isFinite(atual)) nova = /reduz|cort|diminu|menos|caiu/.test(n) ? atual * (1 - qt.pct) : atual * (1 + qt.pct);
-        else if (/acrescent|mais\s+\d|adicion|somar/.test(n) && qt.numeros.length && Number.isFinite(atual)) nova = atual + qt.numeros[qt.numeros.length - 1].v;
-        else if (qt.numeros.length) nova = qt.numeros[qt.numeros.length - 1].v;
-        ev.quantidade = nova != null && Number.isFinite(nova) ? Math.round(nova) : null;
+        else if (qt.pct != null && Number.isFinite(atual)) nova = diminui ? atual * (1 - qt.pct) : atual * (1 + qt.pct);
+        else if (absoluto != null) nova = absoluto;
+        else if (qt.numeros.length && Number.isFinite(atual) && (aumenta || diminui)) {
+          const v = qt.numeros[qt.numeros.length - 1].v;
+          nova = diminui ? atual - v : atual + v;
+          ev.avisos.push(`Entendi ${diminui ? 'menos' : 'mais'} ${U.num(v)} sobre as ${U.num(atual)} atuais.`);
+        } else if (qt.numeros.length) nova = qt.numeros[qt.numeros.length - 1].v;
+        if (nova != null && Number.isFinite(atual) && ((aumenta && !diminui && nova < atual) || (diminui && !aumenta && nova > atual))) {
+          ev.avisos.push('A nova quantidade vai no sentido contrário do que a frase diz; confira.');
+        }
+        ev.quantidade = nova != null && Number.isFinite(nova) && nova > 0 ? Math.round(nova) : null;
         if (ev.quantidade == null) ev.avisos.push('Não achei a nova quantidade.');
         break;
       }
@@ -566,10 +621,19 @@
           if (/comeca|abre|inicia/.test(n) && hs.length === 1) { ev.inicio = U.fmtHora(hs[0].min); ev.fim = padrao.fim; }
         }
         if (/sexta a tarde|a tarde para|parar .* tarde/.test(n) && ev.fechado) { ev.fechado = false; ev.inicio = padrao.ini; ev.fim = '12:00'; }
+        const turnoN = /\b(primeiro|segundo|terceiro)\s+turno\b/.exec(n);
+        if (turnoN && ev.fechado) { // cancela só um dos turnos: mantém o outro
+          const a = U.parseHora(padrao.ini), b = U.parseHora(padrao.fim);
+          const meio = Math.round((a + b) / 2 / 30) * 30;
+          ev.fechado = false;
+          if (turnoN[1] === 'primeiro') { ev.inicio = fmtHM(meio); ev.fim = padrao.fim; } else { ev.inicio = padrao.ini; ev.fim = fmtHM(meio); }
+          ev.avisos.push('Considerei o turno normal dividido ao meio; ajuste os horários se precisar.');
+        }
         break;
       }
       default: break;
     }
+    for (const a of tempo.avisos || []) if (!ev.avisos.includes(a)) ev.avisos.push(a);
     return ev;
   };
 

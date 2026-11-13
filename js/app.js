@@ -47,7 +47,11 @@
   }
   function ocupado(v) {
     S.ocupado = v;
-    for (const id of ['btnOtimizar', 'btnAplicar', 'btnDiag', 'btnRelatorio']) { const b = $('#' + id); if (b) b.disabled = v; }
+    // Enquanto o plano é refeito, nada que mude o cenário pode ser clicado.
+    for (const id of ['btnOtimizar', 'btnOtimizar2', 'btnAplicar', 'btnDescartar', 'btnDiag', 'btnRelatorio', 'btnRelatorio2',
+      'btnDesfazer', 'selExemplo', 'btnAbrir', 'btnInterpretar', 'inpAgora']) { const b = $('#' + id); if (b) b.disabled = v; }
+    $$('[data-avanca]').forEach((b) => { b.disabled = v; });
+    if (!v) $('#btnDesfazer').disabled = !S.historico.length;
     $('#btnOtimizar').textContent = v ? 'Otimizando…' : 'Otimizar agenda';
   }
   const pegar = (obj, caminho) => caminho.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
@@ -68,8 +72,10 @@
     cen.nome = cen.nome || 'Minha fábrica';
     cen.dias = Math.max(1, Math.min(14, Math.round(+cen.dias || 7)));
     cen.passoMin = [15, 30, 60].includes(+cen.passoMin) ? +cen.passoMin : 15;
-    cen.inicio = String(cen.inicio || U.fmtData(Math.floor(Date.now() / 60000))).slice(0, 10);
-    if (!Number.isFinite(U.parseDT(cen.agora))) cen.agora = `${cen.inicio}T06:00`;
+    cen.inicio = String(cen.inicio || '').slice(0, 10);
+    if (!Number.isFinite(U.parseDT(cen.inicio))) cen.inicio = U.fmtData(Math.floor(Date.now() / 60000));
+    const t0 = U.parseDT(cen.inicio), ag = U.parseDT(cen.agora);
+    if (!(ag >= t0 && ag <= t0 + cen.dias * 1440)) cen.agora = `${cen.inicio}T06:00`; // "agora" sempre dentro da semana
     cen.objetivo = Object.assign({ pesoPico: 5 }, cen.objetivo);
     const ano = +cen.inicio.slice(0, 4);
     cen.tarifa = Object.assign({
@@ -105,21 +111,35 @@
     S.serialBase = planos && planos.base ? planos.base : null;
     S.serialOtim = planos && planos.otim ? planos.otim : null;
     S.historico = []; S.impacto = null; S.pendentes = null; S.diag = null; S.sujo = false;
+    S.versao = (S.versao || 0) + 1;
     renderFormularios(); renderCartoes(); renderChips();
   }
 
   function marcarSujo() {
     S.sujo = true;
+    S.versao = (S.versao || 0) + 1; // conta edições, para saber se algo mudou durante um cálculo
     S.diag = null;
     $('#avisoSujo').hidden = false;
     salvarLocal();
   }
 
+  /** Ajusta o cenário no próprio objeto quando o início ou os dias da semana mudam. */
+  function ajustarHorizonte() {
+    const c = S.cen;
+    c.dias = Math.max(1, Math.min(14, Math.round(+c.dias || 7)));
+    c.inicio = String(c.inicio || '').slice(0, 10);
+    if (!Number.isFinite(U.parseDT(c.inicio))) c.inicio = U.fmtData(Math.floor(Date.now() / 60000));
+    while (c.solar.nebulosidade.length < c.dias) c.solar.nebulosidade.push(1);
+    const t0 = U.parseDT(c.inicio), ag = U.parseDT(c.agora);
+    if (!(ag >= t0 && ag <= t0 + c.dias * 1440)) c.agora = `${c.inicio}T06:00`;
+  }
+
   // ================================================================== planejamento
   async function planejar(opc) {
     opc = opc || {};
-    if (!S.cen) return false;
+    if (!S.cen || S.ocupado) return false;
     const exec = ++S.execucao;
+    const versao = S.versao || 0;
     ocupado(true); progresso(0.03);
     await new Promise((r) => setTimeout(r, 0));
     try {
@@ -138,7 +158,7 @@
       if (exec !== S.execucao) return false;
       S.serialBase = OT.serializar(inst, base);
       S.serialOtim = OT.serializar(inst, otim);
-      S.sujo = false;
+      S.sujo = (S.versao || 0) !== versao; // alguém editou os dados durante o cálculo
       S.diag = null;
       avaliarAtual();
       salvarLocal();
@@ -153,18 +173,26 @@
   }
 
   function avaliarAtual() {
-    S.inst = MO.construir(S.cen);
-    const eb = new OT.Estado(S.inst, OT.desserializar(S.inst, S.serialBase));
-    const eo = new OT.Estado(S.inst, OT.desserializar(S.inst, S.serialOtim));
-    S.planoBase = eb.exportar();
-    S.planoOtim = eo.exportar();
-    S.avBase = OT.avaliar(S.inst, eb, true);
-    S.avOtim = OT.avaliar(S.inst, eo, true);
-    S.diagRapido = {
-      demanda: DG.demandaContratada(S.inst, S.avOtim),
-      reat: DG.reativos(S.inst, S.planoOtim, S.avOtim),
-    };
+    try {
+      const inst = MO.construir(S.cen);
+      const eb = new OT.Estado(inst, OT.desserializar(inst, S.serialBase));
+      const eo = new OT.Estado(inst, OT.desserializar(inst, S.serialOtim));
+      S.inst = inst;
+      S.planoBase = eb.exportar();
+      S.planoOtim = eo.exportar();
+      S.avBase = OT.avaliar(inst, eb, true);
+      S.avOtim = OT.avaliar(inst, eo, true);
+      S.diagRapido = {
+        demanda: DG.demandaContratada(inst, S.avOtim),
+        reat: DG.reativos(inst, S.planoOtim, S.avOtim),
+      };
+    } catch (e) {
+      console.error(e);
+      toast('Não consegui montar o modelo com estes dados: ' + e.message, 'erro');
+      return false;
+    }
     renderizar();
+    return true;
   }
 
   // ================================================================== renderização
@@ -479,14 +507,17 @@
       return m;
     };
     const { cen, notas } = EV.aplicar(S.cen, evs, { iniciadas, picoJanela });
+    const versaoAntes = S.versao || 0;
     S.cen = cen;
+    S.versao = versaoAntes + 1;
     const ok = await planejar({});
     if (!ok) {
       S.cen = antes.cen; S.serialBase = antes.serialBase; S.serialOtim = antes.serialOtim;
-      avaliarAtual();
+      S.versao = versaoAntes;
+      avaliarAtual(); renderFormularios(); renderChips();
       return;
     }
-    S.historico.push({ agora: antes.cen.agora, texto: $('#txtEvento').value.trim(), descricoes: evs.map((e) => EV.descrever(e, antes.cen)), antes });
+    S.historico.push({ agora: antes.cen.agora, texto: $('#txtEvento').value.trim(), descricoes: evs.map((e) => EV.descrever(e, antes.cen)), antes, versaoAntes, versaoDepois: S.versao || 0 });
     S.impacto = { antes, notas, mudancas: diffPlanos(antes.serialOtim, S.serialOtim) };
     S.pendentes = null;
     $('#txtEvento').value = '';
@@ -512,16 +543,21 @@
     $('#btnDesfazer').disabled = !S.historico.length;
   }
 
-  function desfazer() {
-    const h = S.historico.pop();
-    if (!h) return;
+  async function desfazer() {
+    if (S.ocupado || !S.historico.length) return;
+    const h = S.historico[S.historico.length - 1];
+    if ((S.versao || 0) !== h.versaoDepois
+      && !(await confirmar('Depois desse evento você mudou dados da fábrica ou da tarifa. Desfazer o evento também desfaz essas mudanças.', 'Desfazer mesmo assim'))) return;
+    S.historico.pop();
     S.cen = h.antes.cen; S.serialBase = h.antes.serialBase; S.serialOtim = h.antes.serialOtim;
     S.impacto = null; S.diag = null; S.sujo = false;
-    avaliarAtual(); renderFormularios(); renderChips(); salvarLocal();
+    S.versao = h.versaoAntes || 0;
+    avaliarAtual(); renderFormularios(); renderChips(); renderEventosLado(); salvarLocal();
     toast('Último evento desfeito.');
   }
 
   function mudarAgora(min) {
+    if (S.ocupado) return;
     const t0 = U.parseDT(S.cen.inicio), fim = t0 + S.cen.dias * 1440;
     S.cen.agora = U.fmtDT(U.clamp(Math.round(min / S.cen.passoMin) * S.cen.passoMin, t0, fim));
     avaliarAtual();
@@ -546,7 +582,13 @@
     if (c.ler) return c.ler(el, linha);
     switch (c.tipo) {
       case 'check': linha[c.campo] = el.checked; return true;
-      case 'numero': { const v = U.numeroBR(el.value); if (!Number.isFinite(v)) return false; linha[c.campo] = v; return true; }
+      case 'numero': {
+        let v = U.numeroBR(el.value);
+        if (!Number.isFinite(v)) return false;
+        if (c.inteiro) { v = Math.max(c.min == null ? 0 : c.min, Math.round(v)); el.value = v; }
+        linha[c.campo] = v;
+        return true;
+      }
       case 'janela': { linha[c.campo] = el.value; return U.parseJanela(el.value).erros.length === 0; }
       default: linha[c.campo] = el.value; return true;
     }
@@ -661,9 +703,9 @@
     ].join('');
     ligarForm($('#formGeral'), (caminho) => {
       if (caminho === 'inicio' || caminho === 'dias') {
-        S.cen = normalizarCenario(S.cen);
+        ajustarHorizonte(); // mexe no próprio objeto: as tabelas continuam ligadas a ele
         S.serialBase = S.serialOtim = null;
-        renderNeb();
+        renderNeb(); renderRelogio();
       }
       if (caminho === 'nome' || caminho === 'descricao') renderCabecalho();
     });
@@ -671,7 +713,7 @@
     editor($('#edMaquinas'), c.maquinas, [
       { campo: 'id', titulo: 'ID', largura: '100px' },
       { campo: 'nome', titulo: 'Nome', largura: '170px' },
-      { campo: 'unidades', titulo: 'Unidades', tipo: 'numero', passo: 1, min: 1, largura: '80px' },
+      { campo: 'unidades', titulo: 'Unidades', tipo: 'numero', passo: 1, min: 1, inteiro: true, largura: '80px' },
       { campo: 'potenciaKW', titulo: 'Potência (kW)', tipo: 'numero', largura: '100px' },
       { campo: 'fp', titulo: 'Fator de potência', tipo: 'numero', passo: 0.01, largura: '100px' },
       { campo: 'janela', titulo: 'Horário de funcionamento', tipo: 'janela', largura: '260px', erro: 'Horário não entendido. Use, por exemplo, seg-sex 06:00-22:00; sab 06:00-14:00' },
@@ -711,7 +753,7 @@
     const opMaq = () => c.maquinas.map((m) => [m.id, m.nome]);
     editor($('#edParadas'), c.indisponibilidades, [
       { campo: 'maquina', titulo: 'Máquina', tipo: 'select', opcoes: opMaq, largura: '170px' },
-      { campo: 'unidade', titulo: 'Unidade (0 = todas)', tipo: 'numero', passo: 1, min: 0, largura: '90px' },
+      { campo: 'unidade', titulo: 'Unidade (0 = todas)', tipo: 'numero', passo: 1, min: 0, inteiro: true, largura: '90px' },
       { campo: 'inicio', titulo: 'Início', tipo: 'datahora', largura: '180px' },
       { campo: 'fim', titulo: 'Fim', tipo: 'datahora', largura: '180px' },
       { campo: 'motivo', titulo: 'Motivo', largura: '200px' },
@@ -831,9 +873,15 @@
   async function rodarDiagnostico() {
     if (S.ocupado || !S.serialOtim) return false;
     ocupado(true); progresso(0.02);
+    // Trabalha sobre uma foto do cenário; se algo mudar no meio, o resultado é descartado.
+    const cen0 = S.cen, versao = S.versao || 0, sB = S.serialBase, sO = S.serialOtim, foto = U.clonar(S.cen);
     try {
-      const modalidades = await DG.compararModalidades(S.cen, S.serialBase, S.serialOtim, { replanejar: true, aoProgresso: (f) => progresso(0.02 + 0.45 * f) });
-      const solar = await DG.dimensionarSolar(S.cen, S.serialOtim, { aoProgresso: (f) => progresso(0.5 + 0.48 * f) });
+      const modalidades = await DG.compararModalidades(foto, sB, sO, { replanejar: true, aoProgresso: (f) => progresso(0.02 + 0.45 * f) });
+      const solar = await DG.dimensionarSolar(foto, sO, { aoProgresso: (f) => progresso(0.5 + 0.48 * f) });
+      if (S.cen !== cen0 || (S.versao || 0) !== versao || S.serialOtim !== sO) {
+        toast('Os dados mudaram durante o diagnóstico. Rode de novo.', 'erro');
+        return false;
+      }
       S.diag = { modalidades, solar };
       renderRecomendacoes(); renderDiagTextos();
       if (S.aba === 'diagnostico') renderDiagGraficos();
@@ -946,6 +994,7 @@
     toast('Arquivo salvo na pasta de downloads.');
   }
   async function abrirArquivo(arq) {
+    if (S.ocupado) return;
     let j;
     try { j = JSON.parse(await arq.text()); } catch (e) { toast('Esse arquivo não é um JSON válido.', 'erro'); return; }
     const cen = j.cenario || j.cen || j;
@@ -956,7 +1005,7 @@
   }
   async function carregarExemplo(k) {
     const ex = CC.EXEMPLOS[k];
-    if (!ex) return;
+    if (!ex || S.ocupado) { $('#selExemplo').value = ''; return; }
     if ((S.historico.length || S.sujo) && !(await confirmar('Carregar o exemplo substitui os dados atuais. Para guardar o que fez, use "Salvar" antes.', 'Carregar exemplo'))) { $('#selExemplo').value = ''; return; }
     definirCenario(ex.cenario, null);
     $('#selExemplo').value = '';

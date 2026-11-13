@@ -101,7 +101,7 @@
       const a = Math.max(0, slot(U.parseDT(ind.inicio), 'baixo'));
       const b = Math.min(T, slot(U.parseDT(ind.fim), 'cima'));
       if (!(b > a)) continue;
-      const un = +ind.unidade > 0 ? [Math.min(M.unidades, +ind.unidade) - 1] : M.bloq.map((_, u) => u);
+      const un = +ind.unidade >= 0.5 ? [U.clamp(Math.round(+ind.unidade), 1, M.unidades) - 1] : M.bloq.map((_, u) => u);
       for (const u of un) for (let t = a; t < b; t++) M.bloq[u][t] = 1;
     }
 
@@ -142,18 +142,24 @@
     // ---------- cargas flexíveis (energia a entregar dentro de uma janela) ----------
     inst.flex = [];
     for (const c of cen.cargasFlexiveis || []) {
-      const { janelas, erros } = U.parseJanela(`${c.dias || 'todos'} ${c.janela || '00:00-24:00'}`);
-      if (erros.length) { avisos.push(`Carga flexível "${c.nome}": janela não entendida.`); continue; }
+      // Os dias valem para cada trecho da janela ("08:00-10:00; 14:00-16:00").
+      const diasTxt = String(c.dias || 'todos').trim() || 'todos';
+      const trechos = String(c.janela || '00:00-24:00').split(/[;\n]+/).map((s) => s.trim()).filter(Boolean);
+      const { janelas, erros } = U.parseJanela(trechos.map((s) => `${diasTxt} ${s}`).join('; '));
+      if (erros.length || !janelas.length) { avisos.push(`Carga flexível "${c.nome}": janela não entendida.`); continue; }
       const kW = +c.potenciaMaxKW || 0, eDia = +c.energiaKWh || 0;
       if (!(kW > 0) || !(eDia > 0)) continue;
       for (let d = 0; d < dias; d++) {
         const dw = U.partes(t0 + d * 1440).dow;
-        for (const j of janelas) {
-          if (!j.dias[dw]) continue;
+        const doDia = janelas.filter((j) => j.dias[dw]);
+        const minutosDia = doDia.reduce((s, j) => s + (j.fim - j.ini), 0);
+        for (let k = 0; k < doDia.length; k++) {
+          const j = doDia[k];
+          const parte = minutosDia > 0 ? (j.fim - j.ini) / minutosDia : 1; // energia do dia dividida entre as janelas
           const aIdeal = Math.ceil((d * 1440 + j.ini) / passo - 1e-9), bIdeal = Math.floor((d * 1440 + j.fim) / passo + 1e-9);
           const a = Math.max(0, aIdeal), b = Math.min(T, bIdeal);
           if (b <= a) continue;
-          let energia = eDia * (b - a) / Math.max(1, bIdeal - aIdeal); // janela cortada pelo fim do horizonte
+          let energia = eDia * parte * (b - a) / Math.max(1, bIdeal - aIdeal); // janela cortada pelo fim do horizonte
           const maxE = kW * dt * (b - a);
           if (energia > maxE + 1e-9) {
             if (b - a === bIdeal - aIdeal) avisos.push(`Carga flexível "${c.nome}": a energia pedida não cabe na janela; usando ${U.num(maxE, 1)} kWh.`);
@@ -162,7 +168,7 @@
           const slots = new Int32Array(b - a);
           for (let i = 0; i < slots.length; i++) slots[i] = a + i;
           inst.flex.push({
-            idx: inst.flex.length, id: `${c.id}@${U.fmtData(t0 + d * 1440)}`, base: String(c.id), nome: c.nome || c.id,
+            idx: inst.flex.length, id: `${c.id}@${U.fmtData(t0 + d * 1440)}${doDia.length > 1 ? '#' + (k + 1) : ''}`, base: String(c.id), nome: c.nome || c.id,
             kW, kvarPorKW: tanFP(c.fp == null ? 0.9 : c.fp), energia, slots, continua: !!c.continua, dia: d,
           });
         }
