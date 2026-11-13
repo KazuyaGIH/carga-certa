@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   const CC = window.CC;
-  const U = CC.util, TA = CC.tarifas, MO = CC.modelo, OT = CC.otim, DG = CC.diag, IA = CC.iaLocal, NV = CC.iaNuvem, EV = CC.eventos, GR = CC.graficos, RV = CC.revisao;
+  const U = CC.util, TA = CC.tarifas, MO = CC.modelo, OT = CC.otim, DG = CC.diag, IA = CC.iaLocal, NV = CC.iaNuvem, EV = CC.eventos, GR = CC.graficos, RV = CC.revisao, IM = CC.impacto;
   const $ = (s, el) => (el || document).querySelector(s);
   const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
   const esc = U.esc;
@@ -100,6 +100,9 @@
     if (!Array.isArray(cen.solar.nebulosidade)) cen.solar.nebulosidade = [];
     while (cen.solar.nebulosidade.length < cen.dias) cen.solar.nebulosidade.push(1);
     for (const k of ['maquinas', 'pedidos', 'cargasFixas', 'cargasFlexiveis', 'indisponibilidades', 'limitesDemanda', 'excecoesTurno']) if (!Array.isArray(cen[k])) cen[k] = [];
+    // Fator de emissão do CO2 e faturas do acompanhamento: não mudam a agenda nem a assinatura do parecer.
+    cen.impacto = { fatorEmissao: IM.fator(cen) };
+    cen.acompanhamento = IM.normalizarAcomp(cen.acompanhamento);
     return cen;
   }
 
@@ -209,8 +212,8 @@
     if (!S.inst) return;
     renderCabecalho(); renderKPIs(); renderFrase(); renderConta(); renderMudancas(); renderAvisos();
     renderDias(); renderTabelaEtapas(); renderEventosLado(); renderRelogio();
-    renderRecomendacoes(); renderDiagTextos();
-    renderPedido(); renderFila(); renderRevisao();
+    renderRecomendacoes(); renderDiagTextos(); renderImpacto();
+    renderPedido(); renderFila(); renderRevisao(); renderAcompResultado();
     $('#avisoSujo').hidden = !S.sujo;
     renderGraficosDaAba();
   }
@@ -219,6 +222,7 @@
     if (S.aba === 'visao') renderCurva();
     else if (S.aba === 'agenda') renderGantt();
     else if (S.aba === 'diagnostico') renderDiagGraficos();
+    else if (S.aba === 'acompanhamento') renderGraficoAcomp();
   }
 
   function renderCabecalho() {
@@ -317,6 +321,127 @@
     if (o.faltaFlex > 0.5) a.push(['', `Faltam ${U.num(o.faltaFlex, 1)} kWh para as cargas flexíveis dentro das janelas.`]);
     if (o.excessoLim > 0.5) a.push(['erro', `O limite de demanda pedido é ultrapassado em até ${U.num(o.excessoLim, 1)} kW: cargas fixas e etapas já iniciadas não deixam baixar mais.`]);
     $('#avisos').innerHTML = a.map(([c, t]) => `<div class="aviso ${c}">${esc(t)}</div>`).join('');
+  }
+
+  // ---------------------------------------------------------------- impacto ambiental (Visão geral e Diagnóstico)
+  function impactoAtual() { return IM.comparar(S.inst, S.avBase, S.avOtim, IM.fator(S.cen)); }
+  const linkFonte = (f, rot) => `<a href="${esc(f.url)}" target="_blank" rel="noopener" title="${esc(f.texto)}">${esc(rot)}</a>`;
+  function htmlFontesImpacto() {
+    return `Fontes: ${linkFonte(IM.FONTES.fator, 'fator de emissão (MCTI)')}, ${linkFonte(IM.FONTES.ponta, 'déficit na ponta (ONS)')}, ${linkFonte(IM.FONTES.cortes, 'cortes de renováveis em 2025')}.`;
+  }
+  function renderImpacto() {
+    const c = impactoAtual(), h = c.hoje, p = c.plano, n = (v) => U.num(v, 0);
+    const caixa = (rot, val, sub) => `<div><span>${rot}</span><strong>${val}</strong><small>${sub}</small></div>`;
+    const caixas = [
+      caixa('Energia tirada da rede', `${n(p.redeMes)} kWh/mês`, `hoje ${n(h.redeMes)} kWh/mês`),
+      caixa('No horário de ponta', `${n(p.pontaMes)} kWh/mês`, c.deslocadoPontaMes >= 1 ? `hoje ${n(h.pontaMes)} · ${n(c.deslocadoPontaMes)} kWh/mês saem da ponta` : `hoje ${n(h.pontaMes)} kWh/mês`),
+      c.temSolar
+        ? caixa('Solar própria usada na fábrica', `${n(p.solarUsadaMes)} kWh/mês`, `hoje ${n(h.solarUsadaMes)} · ${n(p.solarCortadaMes)} kWh/mês cortados`)
+        : caixa('Solar própria', '—', 'sem geração própria'),
+      caixa('CO₂ da energia da rede', `${n(p.co2KgMes)} kg/mês`, `hoje ${n(h.co2KgMes)} kg/mês`),
+    ];
+    const textos = `<ul class="impacto-textos">${IM.textos(c).map((t) => `<li>${esc(t)}</li>`).join('')}</ul>`;
+    $('#impactoVisao').innerHTML = `<div class="numeros">${caixas.join('')}</div>${textos}<p class="nota">${esc(IM.notaFator(c.fator))} <button type="button" class="link" data-ir="diagnostico">Ver a tabela completa no Diagnóstico</button></p>`;
+    const linha = (rot, vb, vo, un) => `<tr><td>${rot}</td><td class="num">${n(vb)} ${un}</td><td class="num">${n(vo)} ${un}</td><td class="num">${U.sinal(Math.round(vo - vb), (v) => n(v))} ${un}</td></tr>`;
+    let t = '<thead><tr><th>Por mês</th><th class="num">Como é hoje</th><th class="num">Planejado</th><th class="num">Diferença</th></tr></thead><tbody>';
+    t += linha('Consumo total da fábrica', h.consumoMes, p.consumoMes, 'kWh');
+    t += linha('Energia tirada da rede', h.redeMes, p.redeMes, 'kWh');
+    t += linha('&nbsp;&nbsp;no horário de ponta', h.pontaMes, p.pontaMes, 'kWh');
+    t += linha('&nbsp;&nbsp;fora da ponta', h.foraPontaMes, p.foraPontaMes, 'kWh');
+    if (c.temSolar) {
+      t += linha('Solar própria usada na fábrica', h.solarUsadaMes, p.solarUsadaMes, 'kWh');
+      t += linha('Solar injetada na rede', h.solarInjetadaMes, p.solarInjetadaMes, 'kWh');
+      t += linha('Solar cortada (limite de injeção e volt-watt)', h.solarCortadaMes, p.solarCortadaMes, 'kWh');
+    }
+    t += `<tr class="total"><td>CO₂ da energia tirada da rede</td><td class="num">${n(h.co2KgMes)} kg</td><td class="num">${n(p.co2KgMes)} kg</td><td class="num">${U.sinal(Math.round(p.co2KgMes - h.co2KgMes), (v) => n(v))} kg</td></tr>`;
+    $('#impactoDiag').innerHTML = `<div class="tabela-rolagem"><table class="tabela">${t}</tbody></table></div>${textos}<p class="nota">${esc(IM.notaFator(c.fator))} O fator pode ser trocado na aba Energia e tarifa. ${htmlFontesImpacto()}</p>`;
+  }
+
+  // ---------------------------------------------------------------- quem faz o quê
+  function htmlQuemFaz(id) {
+    const q = RV.quemFaz(id);
+    if (!q) return '';
+    return `<div class="quem-faz">${RV.QUEM_FAZ_ROTULOS.map(([k, r]) => `<span class="qf-${k}"><b>${r}:</b> ${esc(q[k])}</span>`).join('')}</div>`;
+  }
+
+  // ---------------------------------------------------------------- acompanhamento das faturas
+  function exemploAcompDoCenario() {
+    const e = Object.values(CC.EXEMPLOS).find((x) => x.acompanhamentoExemplo && x.cenario.nome === S.cen.nome);
+    return e ? e.acompanhamentoExemplo : null;
+  }
+  function renderAcompEditor() {
+    const a = S.cen.acompanhamento;
+    $('#acInicio').value = a.inicioPlano || '';
+    editor($('#edFaturas'), a.faturas, [
+      { campo: 'mes', titulo: 'Mês', tipo: 'mes', largura: '150px', erro: 'Mês não entendido. Use, por exemplo, 2026-08 ou 08/2026.',
+        ler: (el, l) => { const m = IM.lerMes(el.value); l.mes = m || ''; if (m && el.value !== m) el.value = m; return !!m || !el.value.trim(); } },
+      { campo: 'kWh', titulo: 'Energia (kWh)', tipo: 'numero', vazio: true, largura: '120px' },
+      { campo: 'demandaKW', titulo: 'Demanda medida (kW)', tipo: 'numero', vazio: true, largura: '130px' },
+      { campo: 'valor', titulo: 'Valor total (R$)', tipo: 'numero', vazio: true, largura: '130px' },
+    ], () => {
+      const ult = a.faturas.map((f) => f.mes).filter(Boolean).sort().pop();
+      return { mes: ult ? IM.mesSeguinte(ult) : '', kWh: null, demandaKW: null, valor: null };
+    }, { aoMudar: acompMudou, rotuloNovo: '+ Adicionar mês' });
+    $('#btnAcExemplo').hidden = !exemploAcompDoCenario();
+    $('#avisoExemploAcomp').innerHTML = a.exemplo
+      ? '<p class="faixa-exemplo">Exemplo: estas faturas são fictícias, só para mostrar como o acompanhamento funciona. Apague e digite as da sua fábrica.</p>'
+      : '';
+  }
+  function acompMudou() {
+    salvarLocal();
+    renderAcompResultado();
+    if (S.aba === 'acompanhamento') renderGraficoAcomp();
+  }
+  function acompAtual() {
+    return IM.acompanhar(S.cen.acompanhamento, S.inst && S.avBase && S.avOtim ? IM.previsto(S.inst, S.avBase, S.avOtim) : null);
+  }
+  function renderAcompResultado() {
+    if (!S.cen) return;
+    const r = acompAtual(), m = IM.textoAcomp(r), a = r.mediaAntes, d = r.mediaDepois;
+    let h = `<div class="aviso-acomp ${m.classe}">${esc(m.texto)}</div>`;
+    if (a && d && (a.meses || d.meses)) {
+      const v = (x, fmt) => (x == null ? '—' : fmt(x));
+      const kwh = (x) => `${U.num(x, 0)} kWh`, kw = (x) => `${U.num(x, 0)} kW`;
+      h += `<div class="numeros">
+        <div><span>Média antes (${a.meses} ${a.meses === 1 ? 'mês' : 'meses'})</span><strong>${v(a.valor, U.brl)}</strong><small>${v(a.kWh, kwh)} · ${v(a.demandaKW, kw)}</small></div>
+        <div><span>Média depois (${d.meses} ${d.meses === 1 ? 'mês' : 'meses'})</span><strong>${v(d.valor, U.brl)}</strong><small>${v(d.kWh, kwh)} · ${v(d.demandaKW, kw)}</small></div>
+        <div><span>Economia real por mês</span><strong>${r.economiaMes == null ? '—' : `${U.brl(r.economiaMes)} (${U.pct(r.economiaPct, 1)})`}</strong><small>média depois × média antes</small></div>
+        <div><span>Prevista pela simulação</span><strong>${r.previsto ? U.pct(r.previsto.economiaPct, 1) : '—'}</strong><small>${r.previsto ? `${U.brl(r.previsto.economiaMes)} por mês, estimados pela semana analisada` : 'otimize a agenda primeiro'}</small></div>
+      </div>`;
+    }
+    if (r.ultrapassagens.length) h += `<p class="cartao-aviso">Demanda medida acima de 105% da contratada (${U.num(r.previsto.contratada, 0)} kW) em ${r.ultrapassagens.map(IM.fmtMes).join(', ')}: nesses meses houve multa de ultrapassagem.</p>`;
+    if (r.repetidos.length) h += `<p class="cartao-aviso">Mês digitado mais de uma vez: ${r.repetidos.map(IM.fmtMes).join(', ')}. As duas faturas entram na média.</p>`;
+    h += '<p class="nota">A simulação estima a conta a partir de uma semana; por isso a comparação usa a porcentagem de economia. Se a produção mudou muito de um mês para outro, compare também a energia (kWh).</p>';
+    $('#resAcomp').innerHTML = h;
+  }
+  function renderGraficoAcomp() {
+    const r = acompAtual();
+    const tem = r.faturas.some((f) => Number.isFinite(f.valor));
+    $('#gAcomp').parentElement.hidden = !tem;
+    $('#notaGAcomp').hidden = !tem;
+    if (tem) GR.barrasFaturas($('#gAcomp'), r); else GR.destruir($('#gAcomp'));
+  }
+  async function carregarAcompExemplo() {
+    const ex = exemploAcompDoCenario();
+    if (!ex) return;
+    const a = S.cen.acompanhamento;
+    if (a.faturas.length && !a.exemplo && !(await confirmar('Trocar as faturas digitadas pelas do exemplo?', 'Trocar'))) return;
+    S.cen.acompanhamento = IM.normalizarAcomp(U.clonar(ex));
+    renderAcompEditor(); acompMudou();
+    toast('Faturas de exemplo carregadas. São fictícias, só para mostrar o acompanhamento.');
+  }
+  async function limparAcomp() {
+    const a = S.cen.acompanhamento;
+    if (!a.faturas.length && !a.inicioPlano) return;
+    if (!(await confirmar('Apagar todas as faturas e o mês de início?', 'Apagar'))) return;
+    S.cen.acompanhamento = IM.normalizarAcomp(null);
+    renderAcompEditor(); acompMudou();
+  }
+  /** Uma linha sobre o acompanhamento, para o resumo e a revisão do engenheiro ('' se não houver dados). */
+  function linhaAcomp(acomp, prev) {
+    const r = IM.acompanhar(acomp, prev);
+    if (r.economiaPct == null) return '';
+    return `Faturas registradas pela fábrica: ${r.mediaAntes.meses} ${r.mediaAntes.meses === 1 ? 'mês' : 'meses'} antes e ${r.mediaDepois.meses} depois de ${IM.fmtMes(r.inicio)}; economia real de ${U.pct(r.economiaPct, 1)}${prev ? `, prevista ${U.pct(prev.economiaPct, 1)}` : ''}${acomp && acomp.exemplo ? '. São faturas de exemplo, fictícias' : ''}.`;
   }
 
   function renderCurva() {
@@ -559,7 +684,9 @@
     if ((S.versao || 0) !== h.versaoDepois
       && !(await confirmar('Depois desse evento você mudou dados da fábrica ou da tarifa. Desfazer o evento também desfaz essas mudanças.', 'Desfazer mesmo assim'))) return;
     S.historico.pop();
+    const acomp = S.cen.acompanhamento, imp = S.cen.impacto; // faturas e fator de CO2 não fazem parte do evento
     S.cen = h.antes.cen; S.serialBase = h.antes.serialBase; S.serialOtim = h.antes.serialOtim;
+    S.cen.acompanhamento = acomp; S.cen.impacto = imp;
     S.impacto = null; S.diag = null; S.sujo = false;
     S.versao = h.versaoAntes || 0;
     avaliarAtual(); renderFormularios(); renderChips(); renderEventosLado(); salvarLocal();
@@ -584,6 +711,7 @@
       case 'data': return `<input type="date" value="${esc(v || '')}" ${a}>`;
       case 'hora': return `<input type="time" value="${esc(v || '')}" ${a}>`;
       case 'check': return `<input type="checkbox"${v ? ' checked' : ''} ${a}>`;
+      case 'mes': return `<input type="month" placeholder="aaaa-mm" value="${esc(v || '')}" ${a}>`;
       case 'select': return `<select ${a}>${c.opcoes().map(([val, rot]) => `<option value="${esc(val)}"${String(val) === String(v) ? ' selected' : ''}>${esc(rot)}</option>`).join('')}</select>`;
       default: return `<input type="text" value="${esc(v == null ? '' : v)}" ${a}${c.placeholder ? ` placeholder="${esc(c.placeholder)}"` : ''}>`;
     }
@@ -593,6 +721,7 @@
     switch (c.tipo) {
       case 'check': linha[c.campo] = el.checked; return true;
       case 'numero': {
+        if (c.vazio && !el.value.trim()) { linha[c.campo] = null; return true; }
         let v = U.numeroBR(el.value);
         if (!Number.isFinite(v)) return false;
         if (c.inteiro) { v = Math.max(c.min == null ? 0 : c.min, Math.round(v)); el.value = v; }
@@ -603,7 +732,10 @@
       default: linha[c.campo] = el.value; return true;
     }
   }
-  function editor(cont, lista, colunas, novo) {
+  /** Tabela editável. opc.aoMudar troca o "dados mudaram, otimize de novo" por outra ação (faturas, por exemplo). */
+  function editor(cont, lista, colunas, novo, opc) {
+    opc = opc || {};
+    const mudou = () => (opc.aoMudar ? opc.aoMudar() : marcarSujo());
     const desenhar = () => {
       let h = '<div class="tabela-rolagem"><table class="tabela editor"><thead><tr>';
       for (const c of colunas) h += `<th${c.largura ? ` style="min-width:${c.largura}"` : ''}>${esc(c.titulo)}</th>`;
@@ -612,7 +744,7 @@
         h += '<tr>' + colunas.map((c) => `<td>${campoEditor(c, linha, i)}</td>`).join('') + `<td class="col-acao"><button class="remover" data-rem="${i}" title="Remover" aria-label="Remover">×</button></td></tr>`;
       });
       if (!lista.length) h += `<tr><td colspan="${colunas.length + 1}" class="vazio">Nenhum item.</td></tr>`;
-      h += '</tbody></table></div><div class="linha-botoes"><button class="btn mini" data-add>+ Adicionar</button></div>';
+      h += `</tbody></table></div><div class="linha-botoes"><button class="btn mini" data-add>${esc(opc.rotuloNovo || '+ Adicionar')}</button></div>`;
       cont.innerHTML = h;
     };
     cont.onchange = (e) => {
@@ -621,12 +753,12 @@
       const ok = lerEditor(c, el, lista[i]);
       el.classList.toggle('invalido', ok === false);
       if (ok === false) toast(c.erro || 'Valor não entendido nesta célula.', 'erro');
-      marcarSujo();
+      mudou();
     };
     cont.onclick = (e) => {
       const r = e.target.closest('[data-rem]');
-      if (r) { lista.splice(+r.dataset.rem, 1); desenhar(); marcarSujo(); return; }
-      if (e.target.closest('[data-add]')) { lista.push(novo()); desenhar(); marcarSujo(); }
+      if (r) { lista.splice(+r.dataset.rem, 1); desenhar(); mudou(); return; }
+      if (e.target.closest('[data-add]')) { lista.push(novo()); desenhar(); mudou(); }
     };
     desenhar();
   }
@@ -819,6 +951,20 @@
       dica: 'Além da conta, quanto vale reduzir 1 kW de pico (transformador, cabos, disjuntores). Use 0 para olhar só a conta.',
     });
     ligarForm($('#formObjetivo'));
+
+    // O fator de emissão só muda o CO2 mostrado: não pede para otimizar de novo.
+    $('#formImpacto').innerHTML = campoForm('impacto.fatorEmissao', 'Fator de emissão da rede (tCO₂/MWh)', 'numero', {
+      passo: 0.0001, dica: 'Padrão 0,0385: média do Sistema Interligado Nacional em 2023, segundo o MCTI. Use o fator do mês da sua fatura, se tiver.',
+    });
+    $('#formImpacto').onchange = (e) => {
+      if (e.target.dataset.caminho !== 'impacto.fatorEmissao') return;
+      const v = U.numeroBR(e.target.value);
+      if (!(Number.isFinite(v) && v >= 0 && v < 2)) { toast('Número inválido.', 'erro'); e.target.value = IM.fator(S.cen); return; }
+      S.cen.impacto.fatorEmissao = v;
+      salvarLocal();
+      if (S.inst) renderImpacto();
+    };
+    renderAcompEditor();
   }
 
   // ================================================================== diagnóstico
@@ -828,7 +974,7 @@
     const par = pa && pa.valido ? pa.p : null;
     const h = itensAtuais().map((it) => {
       const pi = par && par.itens.find((x) => x.id === it.id);
-      return `<li>${esc(it.texto)}${pi ? ' ' + tagDecisao(pi.decisao) : ''}${pi && pi.nota ? `<span class="rec-nota">Engenheiro: ${esc(pi.nota)}</span>` : ''}</li>`;
+      return `<li>${esc(it.texto)}${pi ? ' ' + tagDecisao(pi.decisao) : ''}${pi && pi.nota ? `<span class="rec-nota">Engenheiro: ${esc(pi.nota)}</span>` : ''}${htmlQuemFaz(it.id)}</li>`;
     });
     if (!S.diag) h.push('<li>Para completar o diagnóstico (modalidade tarifária e tamanho da usina solar), clique em "Comparar tarifas e dimensionar a solar". Leva alguns segundos.</li>');
     $('#listaRecom').innerHTML = h.join('');
@@ -924,35 +1070,53 @@
       } finally { c.remove(); }
     }
     const t0 = U.parseDT(cen.inicio);
-    const rec = DG.recomendacoes({ avBase: b, avOtim: o, modalidades: S.diag && S.diag.modalidades, demanda: S.diagRapido.demanda, solar: S.diag && S.diag.solar, reat: S.diagRapido.reat });
+    const itensRec = itensAtuais();
+    const imp = impactoAtual(), n0 = (v) => U.num(v, 0);
     const ka = [
       ['Conta estimada por mês', U.brl(b.contaMes), U.brl(o.contaMes)],
       ['Pico puxado da rede', `${U.num(b.picos.all)} kW`, `${U.num(o.picos.all)} kW`],
       ['Energia no horário de ponta (semana)', `${U.num(b.kwh.ponta)} kWh`, `${U.num(o.kwh.ponta)} kWh`],
+      ['Energia tirada da rede (mês)', `${n0(imp.hoje.redeMes)} kWh`, `${n0(imp.plano.redeMes)} kWh`],
+      ['CO₂ da energia tirada da rede (mês)', `${n0(imp.hoje.co2KgMes)} kg`, `${n0(imp.plano.co2KgMes)} kg`],
       ['Fator de carga', U.num(b.fatorCarga, 2), U.num(o.fatorCarga, 2)],
       ['Custo médio do kWh', U.brl(b.custoMedioKWh, true), U.brl(o.custoMedioKWh, true)],
       ['Energia solar aproveitada', inst.kWp ? U.pct(b.aproveitamentoSolar) : '—', inst.kWp ? U.pct(o.aproveitamentoSolar) : '—'],
       ['Entregas no prazo', `${b.noPrazo} de ${b.pedidos.length}`, `${o.noPrazo} de ${o.pedidos.length}`],
     ];
     const muds = OT.mudancas(inst, S.planoBase, S.planoOtim).slice(0, 12);
+    let num = 0;
+    const sec = (titulo) => `<h2>${++num}. ${titulo}</h2>`;
     let h = `<h1>Diagnóstico energético e plano de produção</h1>
       <p class="sutil">${esc(cen.nome)} · semana de ${U.fmtDia(t0)} a ${U.fmtDia(t0 + (cen.dias - 1) * 1440)} · tarifa ${esc(TA.MODALIDADES[cen.tarifa.modalidade].nome)} · gerado em ${new Date().toLocaleDateString('pt-BR')} pelo Carga Certa (equipe T³ch)</p>
-      <section><h2>1. Resumo</h2><p>${fraseResumo()}</p>
+      <section>${sec('Resumo')}<p>${fraseResumo()}</p>
       <table><thead><tr><th>Indicador</th><th class="num">Como é hoje</th><th class="num">Planejado</th></tr></thead><tbody>${ka.map((k) => `<tr><td>${k[0]}</td><td class="num">${k[1]}</td><td class="num">${k[2]}</td></tr>`).join('')}</tbody></table></section>`;
-    if (img) h += `<section><h2>2. Curva de carga planejada</h2><img src="${img}" alt="Curva de carga"><p class="sutil">Áreas: cargas fixas, máquinas e cargas flexíveis. Linha escura: potência puxada da rede no plano; tracejada: como é hoje. Faixas: horário de ponta.</p></section>`;
-    h += `<section><h2>3. Recomendações</h2><ol>${rec.map((r) => `<li>${esc(r)}</li>`).join('')}</ol></section>`;
-    h += `<section><h2>4. Principais mudanças na agenda</h2>${muds.length ? `<table><thead><tr><th>Etapa</th><th>Hoje</th><th>Planejado</th><th>Motivo</th></tr></thead><tbody>${muds.map((m) => `<tr><td>${esc(m.rotulo)}</td><td>${U.fmtCurto(m.antes)}</td><td>${U.fmtCurto(m.depois)}</td><td>${esc(m.motivo)}</td></tr>`).join('')}</tbody></table>` : '<p>Sem mudanças.</p>'}</section>`;
+    if (img) h += `<section>${sec('Curva de carga planejada')}<img src="${img}" alt="Curva de carga"><p class="sutil">Áreas: cargas fixas, máquinas e cargas flexíveis. Linha escura: potência puxada da rede no plano; tracejada: como é hoje. Faixas: horário de ponta.</p></section>`;
+    h += `<section>${sec('Recomendações e quem faz o quê')}<ol>${itensRec.map((i) => `<li>${esc(i.texto)}${RV.quemFaz(i.id) ? `<br><span class="sutil">${esc(RV.quemFazTexto(i.id))}</span>` : ''}</li>`).join('')}</ol></section>`;
+    h += `<section>${sec('Impacto ambiental e na rede (por mês)')}<table><thead><tr><th></th><th class="num">Como é hoje</th><th class="num">Planejado</th></tr></thead><tbody>`
+      + [['Consumo total da fábrica', imp.hoje.consumoMes, imp.plano.consumoMes, 'kWh'], ['Energia tirada da rede', imp.hoje.redeMes, imp.plano.redeMes, 'kWh'], ['No horário de ponta', imp.hoje.pontaMes, imp.plano.pontaMes, 'kWh']]
+        .concat(imp.temSolar ? [['Solar própria usada na fábrica', imp.hoje.solarUsadaMes, imp.plano.solarUsadaMes, 'kWh'], ['Solar injetada na rede', imp.hoje.solarInjetadaMes, imp.plano.solarInjetadaMes, 'kWh'], ['Solar cortada', imp.hoje.solarCortadaMes, imp.plano.solarCortadaMes, 'kWh']] : [])
+        .concat([['CO₂ da energia tirada da rede', imp.hoje.co2KgMes, imp.plano.co2KgMes, 'kg']])
+        .map(([r, x, y, un]) => `<tr><td>${r}</td><td class="num">${n0(x)} ${un}</td><td class="num">${n0(y)} ${un}</td></tr>`).join('')
+      + `</tbody></table><ul>${IM.textos(imp).map((t) => `<li>${esc(t)}</li>`).join('')}</ul><p class="sutil">${esc(IM.notaFator(imp.fator))} Fontes: ${Object.values(IM.FONTES).map((f) => esc(f.texto)).join('; ')}.</p></section>`;
+    h += `<section>${sec('Principais mudanças na agenda')}${muds.length ? `<table><thead><tr><th>Etapa</th><th>Hoje</th><th>Planejado</th><th>Motivo</th></tr></thead><tbody>${muds.map((m) => `<tr><td>${esc(m.rotulo)}</td><td>${U.fmtCurto(m.antes)}</td><td>${U.fmtCurto(m.depois)}</td><td>${esc(m.motivo)}</td></tr>`).join('')}</tbody></table>` : '<p>Sem mudanças.</p>'}</section>`;
     if (S.diag) {
       const m = S.diag.modalidades, s = S.diag.solar;
-      h += `<section><h2>5. Modalidade tarifária (R$ por mês)</h2><table><thead><tr><th>Modalidade</th><th class="num">Agenda de hoje</th><th class="num">Replanejada</th></tr></thead><tbody>${m.linhas.map((l) => `<tr><td>${esc(l.nome)}${l.atual ? ' (atual)' : ''}${l.mesmoGrupo ? '' : ' (outro grupo)'}</td><td class="num">${U.brl(l.contaHoje)}</td><td class="num">${U.brl(l.contaReplanejada)}</td></tr>`).join('')}</tbody></table></section>`;
-      h += `<section><h2>6. Geração solar</h2><table><thead><tr><th>Usina</th><th class="num">Economia/mês</th><th class="num">Cortado kWh/mês</th><th class="num">Retorno</th><th class="num">VPL 25 anos</th></tr></thead><tbody>${s.linhas.map((l) => `<tr><td>${l.kWp} kWp${l === s.recomendado ? ' (sugerida)' : ''}${l.kWp === s.atual ? ' (atual)' : ''}</td><td class="num">${U.brl(l.economiaMes)}</td><td class="num">${U.num(l.cortLimMes + l.cortVWMes)}</td><td class="num">${l.kWp && Number.isFinite(l.payback) ? U.num(l.payback, 1) + ' anos' : '—'}</td><td class="num">${l.kWp ? U.brl(l.vpl) : '—'}</td></tr>`).join('')}</tbody></table></section>`;
+      h += `<section>${sec('Modalidade tarifária (R$ por mês)')}<table><thead><tr><th>Modalidade</th><th class="num">Agenda de hoje</th><th class="num">Replanejada</th></tr></thead><tbody>${m.linhas.map((l) => `<tr><td>${esc(l.nome)}${l.atual ? ' (atual)' : ''}${l.mesmoGrupo ? '' : ' (outro grupo)'}</td><td class="num">${U.brl(l.contaHoje)}</td><td class="num">${U.brl(l.contaReplanejada)}</td></tr>`).join('')}</tbody></table></section>`;
+      h += `<section>${sec('Geração solar')}<table><thead><tr><th>Usina</th><th class="num">Economia/mês</th><th class="num">Cortado kWh/mês</th><th class="num">Retorno</th><th class="num">VPL 25 anos</th></tr></thead><tbody>${s.linhas.map((l) => `<tr><td>${l.kWp} kWp${l === s.recomendado ? ' (sugerida)' : ''}${l.kWp === s.atual ? ' (atual)' : ''}</td><td class="num">${U.brl(l.economiaMes)}</td><td class="num">${U.num(l.cortLimMes + l.cortVWMes)}</td><td class="num">${l.kWp && Number.isFinite(l.payback) ? U.num(l.payback, 1) + ' anos' : '—'}</td><td class="num">${l.kWp ? U.brl(l.vpl) : '—'}</td></tr>`).join('')}</tbody></table></section>`;
+    }
+    const ac = acompAtual();
+    if (ac.faturas.length) {
+      const msg = IM.textoAcomp(ac);
+      h += `<section>${sec('Acompanhamento das faturas')}${cen.acompanhamento.exemplo ? '<p class="sutil">Faturas de exemplo (fictícias).</p>' : ''}<p>${esc(msg.texto)}</p>
+        <table><thead><tr><th>Mês</th><th class="num">Energia</th><th class="num">Demanda medida</th><th class="num">Valor</th><th>Período</th></tr></thead><tbody>${ac.faturas.map((f) => `<tr><td>${IM.fmtMes(f.mes)}</td><td class="num">${f.kWh == null ? '—' : n0(f.kWh) + ' kWh'}</td><td class="num">${f.demandaKW == null ? '—' : n0(f.demandaKW) + ' kW'}</td><td class="num">${f.valor == null ? '—' : U.brl(f.valor)}</td><td>${!ac.inicio ? '' : f.mes >= ac.inicio ? 'seguindo o plano' : 'antes do plano'}</td></tr>`).join('')}</tbody></table>
+        ${ac.economiaPct != null ? `<p class="sutil">Média antes: ${U.brl(ac.mediaAntes.valor)} por mês; média depois: ${U.brl(ac.mediaDepois.valor)}; economia real ${U.pct(ac.economiaPct, 1)}${ac.previsto ? `, prevista ${U.pct(ac.previsto.economiaPct, 1)}` : ''}.</p>` : ''}</section>`;
     }
     let assinatura = '<div class="assinatura"><div>Engenheiro(a) responsável · CREA</div><div>Data e assinatura</div></div>';
     const pa = parecerAtual();
     if (pa && pa.valido) {
       const p = pa.p, e = p.engenheiro || {};
       const quem = `${esc(e.nome)}${e.registro ? ` · ${esc(e.registro)}` : ''}`;
-      h += `<section><h2>${S.diag ? 7 : 5}. Parecer do engenheiro</h2>
+      h += `<section>${sec('Parecer do engenheiro')}
         <p>${quem}${e.organizacao ? ` · ${esc(e.organizacao)}` : ''} · emitido em ${esc(dataHora(p.emitidoEm))}: ${esc(RV.textoResumo(p.resumo || {}))}.</p>
         <table><thead><tr><th>Recomendação</th><th>Decisão</th><th>Ajuste ou observação</th></tr></thead><tbody>${p.itens.map((i) => `<tr><td>${esc(i.texto)}</td><td>${esc((RV.de(RV.DECISOES, i.decisao) || {}).tag || '')}</td><td>${esc(i.nota || '')}${i.totalConferir ? `<br><span class="sutil">Conferido em campo: ${Array.isArray(i.conferidos) ? i.conferidos.length : 0} de ${+i.totalConferir} itens</span>` : ''}</td></tr>`).join('')}</tbody></table>
         ${p.observacoes ? `<p><strong>Observações:</strong> ${esc(p.observacoes)}</p>` : ''}</section>`;
@@ -960,7 +1124,7 @@
     } else if (pa) {
       h += `<section><h2>Parecer do engenheiro</h2><p class="sutil">Há um parecer de ${esc(dataHora(pa.p.emitidoEm))}, mas os dados da fábrica mudaram depois dele. É preciso pedir uma nova avaliação.</p></section>`;
     }
-    h += `<section><h2>Premissas</h2><p class="sutil">Tarifas de aplicação da Enel SP homologadas pela ANEEL (REH nº 3.596/2026), com ${U.pct(+cen.tarifa.tributos || 0, 1)} de tributos. Mês estimado a partir da semana planejada (× ${U.num(inst.fatorMes, 2)}). Energia injetada valorada pela Lei 14.300/2022 (${U.pct(+cen.tarifa.fioBPercentual || 0)} do Fio B não compensado). Geração solar por modelo de céu claro ajustado pelo céu previsto de cada dia. Os valores são estimativas e devem ser conferidos com medições e faturas reais.</p></section>${assinatura}`;
+    h += `<section>${sec('Premissas')}<p class="sutil">Tarifas de aplicação da Enel SP homologadas pela ANEEL (REH nº 3.596/2026), com ${U.pct(+cen.tarifa.tributos || 0, 1)} de tributos. Mês estimado a partir da semana planejada (× ${U.num(inst.fatorMes, 2)}). Energia injetada valorada pela Lei 14.300/2022 (${U.pct(+cen.tarifa.fioBPercentual || 0)} do Fio B não compensado). Geração solar por modelo de céu claro ajustado pelo céu previsto de cada dia. Os valores são estimativas e devem ser conferidos com medições e faturas reais.</p></section>${assinatura}`;
     $('#relatorio').innerHTML = h;
     setTimeout(() => window.print(), 50);
   }
@@ -973,6 +1137,8 @@
       demanda: S.diagRapido.demanda, solar: S.diag && S.diag.solar, reat: S.diagRapido.reat,
     });
     const c = lerContato();
+    const imp = impactoAtual();
+    const la = linhaAcomp(cen.acompanhamento, IM.previsto(S.inst, b, o));
     return [
       `Empresa: ${cen.nome}${c.cidade ? ` (${c.cidade})` : ''}`,
       ...(c.contato ? [`Contato: ${c.contato}`] : []),
@@ -983,7 +1149,9 @@
       `Conta estimada: ${U.brl(b.contaMes)} hoje, ${U.brl(o.contaMes)} com a agenda planejada (por mês)`,
       `Pico puxado da rede: ${U.num(b.picos.all)} kW hoje, ${U.num(o.picos.all)} kW planejado`,
       `Fator de carga: ${U.num(b.fatorCarga, 2)} hoje, ${U.num(o.fatorCarga, 2)} planejado`,
+      `Energia tirada da rede: ${U.num(imp.hoje.redeMes)} kWh/mês hoje, ${U.num(imp.plano.redeMes)} planejado (${U.num(imp.deslocadoPontaMes)} kWh/mês saem da ponta; CO₂ ${U.num(imp.hoje.co2KgMes)} → ${U.num(imp.plano.co2KgMes)} kg/mês)`,
       `Entregas no prazo: ${o.noPrazo} de ${o.pedidos.length}`,
+      ...(la ? [la] : []),
       '',
       'Recomendações para validar:',
       ...rec.map((r, i) => `${i + 1}. ${r}`),
@@ -1235,6 +1403,8 @@
     const r = p.rascunho || {}, dec = r.decisoes || {};
     const st = RV.de(RV.STATUS, p.status) || RV.STATUS.aguardando;
     const mesmos = !!S.serialOtim && assinaturaAtual() === p.assinatura;
+    const ch = +p.contaHoje || 0, cp = +p.contaPlanejada || 0;
+    const acompPedido = linhaAcomp(p.cenario && p.cenario.acompanhamento, ch > 0 ? { economiaPct: (ch - cp) / ch, economiaMes: ch - cp } : null);
     const itens = p.itens.map((it, i) => {
       const d = RV.de(dec, it.id) || {};
       const conf = RV.conferir(it.id);
@@ -1242,6 +1412,7 @@
       return `<li class="item-rev" data-item="${esc(it.id)}">
         <div class="item-cab"><span class="item-num">${i + 1}.</span><span class="tag">${esc(RV.de(RV.AREAS, it.area) || it.area)}</span>${+it.economiaMes > 0.5 ? `<span class="item-eco">${U.brl(+it.economiaMes)} por mês</span>` : ''}${RV.exigeART(it.id) ? '<span class="tag alerta" data-dica="Projeto e instalação com Anotação de Responsabilidade Técnica (ART) registrada no CREA.">exige ART</span>' : ''}</div>
         <p class="item-texto">${esc(it.texto)}</p>
+        ${htmlQuemFaz(it.id)}
         ${conf.length ? `<div class="conferir"><p class="conferir-tit">O que conferir <span data-conta>${marcados.size} de ${conf.length}</span></p>${conf.map((c, k) => `<label class="check"><input type="checkbox" data-conf="${k}"${marcados.has(k) ? ' checked' : ''}><span>${esc(c)}</span></label>`).join('')}</div>` : ''}
         <div class="seg decisao" role="group" aria-label="Decisão sobre a recomendação ${i + 1}">${Object.entries(RV.DECISOES).map(([k, x]) => `<button type="button" data-dec="${k}" class="dec-${k}${d.decisao === k ? ' ativo' : ''}" aria-pressed="${d.decisao === k}">${x.rotulo}</button>`).join('')}</div>
         <label class="campo"><span data-rotulo>${RV.de(ROTULO_NOTA, d.decisao) || ROTULO_NOTA.aprovada}</span><textarea data-nota rows="2" placeholder="O que muda e por quê">${esc(d.nota || '')}</textarea></label>
@@ -1251,6 +1422,7 @@
       <div class="painel-cab"><h3>Revisão: ${esc(p.empresa)}</h3><span class="tag ${st.classe}">${st.texto}</span></div>
       <p class="nota">${esc(p.cidade || 'cidade não informada')} · ${esc(nomeModalidade(p.modalidade))} · pedido em ${esc(dataHora(p.criadoEm))}${p.contato ? ` · contato: ${esc(p.contato)}` : ''}</p>
       ${p.mensagem ? `<blockquote class="recado">${esc(p.mensagem)}</blockquote>` : ''}
+      ${acompPedido ? `<p class="estado-pedido">${esc(acompPedido)}</p>` : ''}
       ${mesmos ? '' : '<p class="cartao-aviso">Os dados na tela não são mais os deste pedido; a revisão vale para os dados do pedido. <button type="button" class="link" data-recarregar>Voltar aos dados do pedido</button></p>'}
       <p>Os números deste caso estão nas abas Visão geral, Agenda, Energia e tarifa e Diagnóstico. Para cada recomendação, marque o que conferiu e decida.</p>
       <ol class="itens-rev">${itens}</ol>
@@ -1487,7 +1659,7 @@
   }
 
   // ================================================================== ligações
-  const ABAS = ['visao', 'agenda', 'eventos', 'fabrica', 'energia', 'diagnostico', 'engenheiros', 'sobre'];
+  const ABAS = ['visao', 'agenda', 'eventos', 'fabrica', 'energia', 'diagnostico', 'engenheiros', 'acompanhamento', 'sobre'];
   function irPara(aba) {
     if (!ABAS.includes(aba)) aba = 'visao';
     S.aba = aba;
@@ -1569,6 +1741,17 @@
     $('#btnImportarPedido').onclick = () => $('#arquivoPedido').click();
     $('#arquivoPedido').onchange = (e) => { const f = e.target.files[0]; if (f) importarPedidoArquivo(f); e.target.value = ''; };
     $('#btnExemplosFila').onclick = carregarPedidosExemplo;
+    // impacto e acompanhamento
+    $('#impactoVisao').addEventListener('click', (e) => { const b = e.target.closest('[data-ir]'); if (b) irPara(b.dataset.ir); });
+    $('#acInicio').onchange = (e) => {
+      const m = IM.lerMes(e.target.value);
+      if (e.target.value.trim() && !m) { toast('Mês não entendido. Use, por exemplo, 2026-08 ou 08/2026.', 'erro'); return; }
+      S.cen.acompanhamento.inicioPlano = m;
+      if (m && e.target.value !== m) e.target.value = m;
+      acompMudou();
+    };
+    $('#btnAcExemplo').onclick = carregarAcompExemplo;
+    $('#btnAcLimpar').onclick = limparAcomp;
     const rev = $('#painelRevisao');
     rev.addEventListener('click', cliqueRevisao);
     rev.addEventListener('change', marcarConferido);
@@ -1628,6 +1811,7 @@
   CC.app = {
     estado: S, planejar, avaliarAtual, interpretar, aplicarEventos, rodarDiagnostico, gerarRelatorio, irPara,
     pedirAvaliacao, abrirCaso, emitirParecer, carregarPedidosExemplo, importarPedido, removerPedido, parecerAtual,
+    carregarAcompExemplo, acompAtual, impactoAtual,
   };
   iniciar();
 })();

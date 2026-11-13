@@ -71,6 +71,47 @@
   };
   const ART = { solar: true, reativo: true };
 
+  // Quem faz o quê depois do parecer: o engenheiro valida, mas outras pessoas decidem, executam e aprovam.
+  const QUEM_FAZ = {
+    agenda: {
+      decide: 'dono ou gerente da fábrica',
+      executa: 'encarregado de produção, que segue a agenda e avisa os imprevistos na aba Eventos do dia',
+      aprova: 'não depende de aprovação de fora',
+      atencao: 'turno da noite custa mais (adicional noturno de pelo menos 20%, CLT art. 73) e a equipe precisa aceitar a mudança de horário',
+    },
+    modalidade: {
+      decide: 'dono da fábrica, depois da conferência do engenheiro',
+      executa: 'pedido de troca de modalidade à distribuidora',
+      aprova: 'distribuidora, que pode precisar trocar o medidor',
+      atencao: 'sem disciplina de horário a conta pode subir; confirmar com a distribuidora as regras para voltar',
+    },
+    demanda: {
+      decide: 'dono, com a validação do engenheiro',
+      executa: 'pedido de alteração do contrato à distribuidora',
+      aprova: 'distribuidora',
+      atencao: 'respeitar os prazos e a carência para alterar o contrato (REN 1.000/2021); se a produção crescer, a multa de ultrapassagem volta',
+    },
+    solar: {
+      decide: 'dono, com o retorno refeito a partir de orçamentos reais',
+      executa: 'empresa instaladora',
+      aprova: 'engenheiro assina o projeto (ART) e a distribuidora aprova a conexão',
+      atencao: 'o investimento inicial é alto (há linhas de crédito para geração solar) e o limite de injeção é a distribuidora que define',
+    },
+    'solar-demanda': {
+      decide: 'dono e engenheiro, juntos: usina maior ou demanda contratada menor',
+      executa: 'depende da escolha: instaladora ou pedido à distribuidora',
+      aprova: 'engenheiro',
+      atencao: 'as duas medidas disputam o mesmo limite de potência',
+    },
+    reativo: {
+      decide: 'dono da fábrica',
+      executa: 'eletricista instala o banco de capacitores, depois da medição de harmônicas',
+      aprova: 'engenheiro, com projeto e ART',
+      atencao: 'harmônicas de inversores podem exigir reator de dessintonia, o que encarece o banco',
+    },
+  };
+  R.QUEM_FAZ_ROTULOS = [['decide', 'Decide'], ['executa', 'Executa'], ['aprova', 'Aprova'], ['atencao', 'Atenção']];
+
   /** Lê uma chave só se ela for do próprio objeto (dados de arquivo não alcançam __proto__ e afins). */
   R.de = (obj, k) => (typeof k === 'string' && Object.prototype.hasOwnProperty.call(obj, k) ? obj[k] : null);
   const ID_ITEM = /^[a-z][a-z0-9-]{0,39}$/;
@@ -78,6 +119,14 @@
   const tipo = (id) => String(id).replace(/-\d+$/, ''); // 'demanda-1' → 'demanda'
   R.conferir = (id) => (R.de(CONFERIR, tipo(id)) || []).slice();
   R.exigeART = (id) => !!R.de(ART, tipo(id));
+  /** { decide, executa, aprova, atencao } da recomendação, ou null. */
+  R.quemFaz = (id) => { const q = R.de(QUEM_FAZ, tipo(id)); return q ? Object.assign({}, q) : null; };
+  /** "Decide: …; executa: …; aprova: …; atenção: …" numa linha (relatório e resumo em texto). */
+  R.quemFazTexto = function (id) {
+    const q = R.quemFaz(id);
+    if (!q) return '';
+    return R.QUEM_FAZ_ROTULOS.map(([k, r], i) => `${i ? r.toLowerCase() : r}: ${q[k]}`).join('; ') + '.';
+  };
 
   const txt = (v, max) => String(v == null ? '' : v).trim().slice(0, max || 200);
   const numero = (v) => (Number.isFinite(+v) ? +v : 0);
@@ -109,12 +158,13 @@
     return ('0000000' + h.toString(16)).slice(-8);
   }
   /**
-   * Muda se qualquer dado da fábrica ou da agenda mudar. Ignora a parte de revisão (pedido e parecer)
-   * e o relógio simulado ("agora"), que sozinho não muda nenhuma recomendação.
+   * Muda se qualquer dado da fábrica ou da agenda mudar. Ignora a parte de revisão (pedido e parecer),
+   * o relógio simulado ("agora"), as faturas do acompanhamento e o fator de emissão do CO2:
+   * nenhum deles muda as recomendações.
    */
   R.assinaturaDados = function (cen, planos) {
     const c = Object.assign({}, cen);
-    delete c.revisao; delete c.agora;
+    delete c.revisao; delete c.agora; delete c.acompanhamento; delete c.impacto;
     return fnv1a(estavel({ c, b: planos ? planos.base : null, o: planos ? planos.otim : null }));
   };
 

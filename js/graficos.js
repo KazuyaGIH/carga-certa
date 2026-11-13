@@ -58,7 +58,13 @@
         if (yy < a.top || yy > a.bottom) continue;
         ctx.strokeStyle = ref.cor; ctx.setLineDash([6, 4]); ctx.lineWidth = 1.2;
         ctx.beginPath(); ctx.moveTo(a.left, yy); ctx.lineTo(a.right, yy); ctx.stroke();
-        ctx.setLineDash([]); ctx.fillStyle = ref.cor; ctx.textAlign = 'right';
+        ctx.setLineDash([]); ctx.textAlign = 'right';
+        if (ref.fundo) { // rótulo sobre as barras: caixinha branca para continuar legível
+          const w = ctx.measureText(ref.rotulo).width;
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+          ctx.fillRect(a.right - 8 - w, yy - 16, w + 8, 14);
+        }
+        ctx.fillStyle = ref.cor;
         ctx.fillText(ref.rotulo, a.right - 4, yy - 4);
       }
       if (inst && o.limites) { // trechos com limite de demanda pedido
@@ -163,6 +169,45 @@
         ],
       },
       options: op,
+    });
+    canvas._grafico = g;
+    return g;
+  };
+
+  // ------------------------------------------------------------------ acompanhamento das faturas
+  /** r = resultado de CC.impacto.acompanhar: barras do valor de cada mês (cinza antes do plano, verde depois). */
+  GR.barrasFaturas = function (canvas, r) {
+    destruir(canvas);
+    if (!disponivel() || !r) return null;
+    const lista = r.faturas.filter((f) => Number.isFinite(f.valor));
+    if (!lista.length) return null;
+    const fmtMes = CC.impacto.fmtMes;
+    const depois = (f) => !!r.inicio && f.mes >= r.inicio;
+    const op = base();
+    op.plugins.legend.display = false;
+    op.scales = {
+      x: { grid: { display: false }, ticks: { color: COR.texto } },
+      y: { beginAtZero: true, grid: { color: COR.grade }, ticks: { color: COR.texto, callback: (v) => U.brl(v) } },
+    };
+    op.plugins.tooltip = { callbacks: { label: (c) => ` ${U.brl(c.parsed.y)}${depois(lista[c.dataIndex]) ? ' (seguindo o plano)' : ' (antes do plano)'}` } };
+    const refs = [];
+    const mA = r.mediaAntes && r.mediaAntes.valor;
+    if (mA != null) {
+      refs.push({ valor: mA, rotulo: `média antes ${U.brl(mA)}`, cor: '#566170', fundo: true });
+      if (r.previsto && r.previsto.economiaPct > 0) {
+        const prev = mA * (1 - r.previsto.economiaPct);
+        refs.push({ valor: prev, rotulo: `previsto com o plano ${U.brl(prev)}`, cor: COR.acento, fundo: true });
+      }
+    }
+    op.plugins.referencias = { horizontais: refs };
+    const g = new G.Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels: lista.map((f) => fmtMes(f.mes)),
+        datasets: [{ label: 'Valor da fatura', data: lista.map((f) => f.valor), backgroundColor: lista.map((f) => (depois(f) ? COR.acento : COR.cinza)), borderRadius: 3, maxBarThickness: 46 }],
+      },
+      options: op,
+      plugins: [pluginReferencias],
     });
     canvas._grafico = g;
     return g;
