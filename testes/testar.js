@@ -1,7 +1,8 @@
 /* Testes automáticos do Carga Certa (sem navegador).
  * Rodar na pasta do projeto:   node testes/testar.js
  * Verifica: regras da agenda (máquinas, turnos, ordem das etapas, paradas, cargas flexíveis),
- * se a otimização não piora a conta e se a IA local entende frases de exemplo.
+ * se a otimização não piora a conta, se a IA local entende frases de exemplo e a ponte com o
+ * engenheiro (pedido em arquivo, fila por impacto, parecer e aviso quando os dados mudam).
  */
 'use strict';
 const fs = require('fs');
@@ -13,7 +14,7 @@ const contexto = { console, setTimeout, clearTimeout };
 contexto.globalThis = contexto;
 vm.createContext(contexto);
 const ARQUIVOS = ['js/util.js', 'js/tarifas.js', 'js/solar.js', 'js/modelo.js', 'js/otimizador.js',
-  'js/diagnostico.js', 'js/ia-local.js', 'js/eventos.js', 'dados/exemplos.js'];
+  'js/diagnostico.js', 'js/revisao.js', 'js/ia-local.js', 'js/eventos.js', 'dados/exemplos.js'];
 for (const f of ARQUIVOS) {
   const p = path.join(raiz, f);
   if (fs.existsSync(p)) vm.runInContext(fs.readFileSync(p, 'utf8'), contexto, { filename: f });
@@ -164,13 +165,84 @@ async function testarEventosEDiagnostico(r) {
   console.log(`  FP médio ${U.num(rea.fpMedio, 3)} (sem solar seria ${U.num(rea.fpSemSolar, 3)}), reativo excedente ${U.brl(rea.custoMes)}/mês, banco ${rea.banco} kvar -> ${U.brl(rea.custoMesComBanco)}/mês`);
   const rec = CC.diag.recomendacoes({ avBase: r.avB, avOtim: r.avO, modalidades: mods, demanda: dem, solar: sol, reat: rea });
   for (const x of rec) console.log('  - ' + x);
+  return { mods, dem, sol, rea, rec, sB, sO };
+}
+
+function testarRevisao(r, d) {
+  console.log('\n=== Ponte com o engenheiro (pedido, fila e parecer) ===');
+  const RV = CC.revisao;
+  const itens = CC.diag.itens({ avBase: r.avB, avOtim: r.avO, modalidades: d.mods, demanda: d.dem, solar: d.sol, reat: d.rea });
+  confere(itens.map((i) => i.texto).join('|') === d.rec.join('|'), 'itens e recomendações em texto divergem');
+  confere(new Set(itens.map((i) => i.id)).size === itens.length, 'recomendações com id repetido');
+  confere(itens.every((i) => RV.AREAS[i.area]), 'recomendação com área desconhecida');
+  confere(itens.every((i) => RV.conferir(i.id).length >= 2), 'recomendação sem lista do que conferir');
+  confere(itens.every((i) => Number.isFinite(i.economiaMes) && i.economiaMes >= 0), 'economia por recomendação inválida');
+  for (const i of itens) console.log(`  [${i.id}] ${RV.AREAS[i.area]}: ${U.brl(i.economiaMes)}/mês${RV.exigeART(i.id) ? ' (exige ART)' : ''}`);
+  const eco = RV.economiaPossivel(itens);
+  const soma = (a) => itens.filter((i) => i.area === a).reduce((s, i) => s + i.economiaMes, 0);
+  const esperado = eco.conflito
+    ? soma('planejamento') + soma('tarifa') + soma('qualidade') + Math.max(soma('demanda'), soma('solar'))
+    : itens.reduce((s, i) => s + i.economiaMes, 0);
+  confere(Math.abs(eco.total - esperado) < 1e-6, 'economia possível somada errado');
+  console.log(`  economia possível: ${U.brl(eco.total)}/mês${eco.conflito ? ' (solar e demanda disputam: conta a maior)' : ''}`);
+
+  // Pedido: ida e volta pelo JSON, como num arquivo mandado por e-mail
+  const planos = { base: d.sB, otim: d.sO };
+  const ped = RV.montarPedido({ cen: r.cen, planos, diag: { modalidades: d.mods, solar: d.sol }, avBase: r.avB, avOtim: r.avO, itens, meta: { cidade: 'São Paulo (SP)', contato: '', mensagem: 'teste' } });
+  const j = JSON.parse(JSON.stringify(ped));
+  confere(RV.validarPedido(j) === '', 'pedido válido recusado: ' + RV.validarPedido(j));
+  confere(RV.validarPedido({ formato: 'outro' }) !== '', 'arquivo qualquer aceito como pedido');
+  const mal = U.clonar(j); mal.itens[0].id = '__proto__';
+  const mal2 = U.clonar(j); mal2.itens[0].area = '__proto__';
+  confere(RV.validarPedido(mal) !== '' && RV.validarPedido(mal2) !== '', 'pedido com nomes internos do JavaScript (__proto__) deveria ser recusado');
+  confere(RV.assinaturaDados(j.cenario, j.planos) === ped.assinatura, 'assinatura muda na ida e volta pelo JSON');
+  const c2 = U.clonar(j.cenario);
+  c2.agora = c2.inicio + 'T10:00';
+  confere(RV.assinaturaDados(c2, j.planos) === ped.assinatura, 'mudar só o relógio simulado não deveria invalidar o parecer');
+  c2.maquinas[0].potenciaKW += 1;
+  confere(RV.assinaturaDados(c2, j.planos) !== ped.assinatura, 'mudar um dado da fábrica deveria mudar a assinatura');
+  const diag = RV.restaurarDiag(j.diag);
+  confere(diag && diag.modalidades.linhas.includes(diag.modalidades.melhor) && diag.solar.linhas.includes(diag.solar.recomendado), 'diagnóstico restaurado sem as referências');
+  confere(diag && diag.solar.recomendado.kWp === d.sol.recomendado.kWp, 'usina sugerida mudou na ida e volta');
+  const imp = RV.prepararImportado(j);
+  confere(imp.assinatura === ped.assinatura && imp.status === 'aguardando' && Math.abs(imp.economiaMes - ped.economiaMes) < 1e-6, 'pedido importado diferente do original');
+
+  // Parecer
+  const eng = { nome: 'Eng. Teste', registro: 'CREA-SP 0000', organizacao: 'Empresa júnior' };
+  confere(RV.validarParecer(ped, null, eng).length === itens.length, 'parecer vazio deveria pedir uma decisão por recomendação');
+  confere(RV.validarParecer(ped, null, {}).length === itens.length + 1, 'parecer sem nome deveria ser recusado');
+  const rasc = { decisoes: {}, observacoes: 'ok' };
+  itens.forEach((i) => { rasc.decisoes[i.id] = { decisao: 'aprovada', conferidos: [0, 1, 1, 99] }; });
+  rasc.decisoes[itens[0].id] = { decisao: 'ajuste', nota: '' };
+  confere(RV.validarParecer(ped, rasc, eng).length === 1, 'ajuste sem explicação deveria ser recusado');
+  rasc.decisoes[itens[0].id].nota = 'Contratar 65 kW por causa da partida do compressor.';
+  confere(RV.validarParecer(ped, rasc, eng).length === 0, 'parecer completo recusado');
+  const par = RV.montarParecer(ped, rasc, eng);
+  confere(par.resumo.ajustes === 1 && par.resumo.aprovadas === itens.length - 1 && par.resumo.recusadas === 0, 'contagem do parecer errada');
+  confere(par.itens.slice(1).every((i) => i.conferidos.join() === '0,1'), 'itens conferidos não foram limpos');
+  confere(par.assinatura === ped.assinatura, 'parecer sem a assinatura do pedido');
+  console.log(`  parecer de teste: ${RV.textoResumo(par.resumo)}`);
+
+  // Fila: ordem por economia, por % da conta e por chegada; filtro por especialidade
+  const t = (h) => new Date(Date.UTC(2026, 10, 13, h)).toISOString();
+  const fila = [
+    { id: 'a', economiaMes: 3000, percentual: 0.05, criadoEm: t(10), status: 'aguardando', itens: [{ area: 'solar' }] },
+    { id: 'b', economiaMes: 1500, percentual: 0.17, criadoEm: t(8), status: 'revisao', itens: [{ area: 'planejamento' }] },
+    { id: 'c', economiaMes: 9000, percentual: 0.30, criadoEm: t(6), status: 'parecer', itens: [{ area: 'tarifa' }] },
+  ];
+  const ids = (l) => l.map((p) => p.id).join('');
+  confere(ids(RV.ordenar(fila, 'reais')) === 'abc', 'ordem por R$ errada: ' + ids(RV.ordenar(fila, 'reais')));
+  confere(ids(RV.ordenar(fila, 'percentual')) === 'bac', 'ordem por % errada: ' + ids(RV.ordenar(fila, 'percentual')));
+  confere(ids(RV.ordenar(fila, 'antigos')) === 'bac', 'ordem por chegada errada: ' + ids(RV.ordenar(fila, 'antigos')));
+  confere(ids(RV.ordenar(fila, 'reais', ['planejamento'], true)) === 'b', 'filtro por especialidade errado');
 }
 
 (async () => {
   const r1 = await testarCenario('metalurgica');
   const r2 = await testarCenario('padaria');
   testarIA(r1.cen);
-  await testarEventosEDiagnostico(r1);
+  const d1 = await testarEventosEDiagnostico(r1);
+  testarRevisao(r1, d1);
   console.log('\n--- padaria: modalidades ---');
   const m2 = await CC.diag.compararModalidades(r2.cen, CC.otim.serializar(r2.inst, r2.base), CC.otim.serializar(r2.inst, r2.otim), { replanejar: true });
   for (const l of m2.linhas) console.log(`  ${l.nome.padEnd(18)} hoje ${U.brl(l.contaHoje).padStart(10)} | agenda atual ${U.brl(l.contaAgendaAtual).padStart(10)} | replanejada ${U.brl(l.contaReplanejada).padStart(10)}${l.mesmoGrupo ? '' : '  (outro grupo)'}`);
