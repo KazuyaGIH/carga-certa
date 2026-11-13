@@ -186,26 +186,30 @@
     };
   };
 
-  /** Recomendações em texto para o painel e o relatório. */
-  D.recomendacoes = function (ctx) {
+  /**
+   * Recomendações com identificador, área e economia por mês. São a base do painel, do relatório
+   * e da revisão do engenheiro (que aprova, ajusta ou recusa cada uma pelo `id`).
+   */
+  D.itens = function (ctx) {
     const r = [];
     const { avBase, avOtim, modalidades, demanda, solar, reat } = ctx;
     if (avBase && avOtim) {
       const eco = avBase.contaMes - avOtim.contaMes;
-      if (eco > 1) r.push(`Seguir a agenda planejada: economia estimada de ${U.brl(eco)} por mês (${U.pct(eco / avBase.contaMes, 1)}), com ${avOtim.noPrazo} de ${avOtim.pedidos.length} pedidos no prazo.`);
+      if (eco > 1) r.push({ id: 'agenda', area: 'planejamento', economiaMes: eco, texto: `Seguir a agenda planejada: economia estimada de ${U.brl(eco)} por mês (${U.pct(eco / avBase.contaMes, 1)}), com ${avOtim.noPrazo} de ${avOtim.pedidos.length} pedidos no prazo.` });
     }
     if (modalidades && modalidades.melhor && !modalidades.melhor.atual) {
       const atual = modalidades.linhas.find((l) => l.atual);
       const m = modalidades.melhor;
       const v = m.contaReplanejada != null ? m.contaReplanejada : m.contaAgendaAtual;
       const va = atual.contaReplanejada != null ? atual.contaReplanejada : atual.contaAgendaAtual;
-      if (va - v > 1) r.push(`Avaliar a troca para a modalidade ${m.nome}: ${U.brl(va - v)} a menos por mês, desde que a agenda acompanhe a nova tarifa.`);
+      if (va - v > 1) r.push({ id: 'modalidade', area: 'tarifa', economiaMes: va - v, texto: `Avaliar a troca para a modalidade ${m.nome}: ${U.brl(va - v)} a menos por mês, desde que a agenda acompanhe a nova tarifa.` });
     }
     if (demanda && demanda.aplica) {
-      for (const p of demanda.parcelas) {
-        if (p.ultrapassagem) r.push(`${p.nome}: a medição (${U.num(p.medida, 0)} kW) passa da contratada (${U.num(p.contratada, 0)} kW) e gera multa de ultrapassagem. Contratar cerca de ${p.recomendada} kW.`);
-        else if (p.contratada - p.recomendada >= 5) r.push(`${p.nome}: com a nova agenda o pico fica em ${U.num(p.medida, 0)} kW. Dá para reduzir a demanda contratada de ${U.num(p.contratada, 0)} kW para cerca de ${p.recomendada} kW (${U.brl(p.custoAtual - p.custoRecomendado)} a menos por mês), respeitando os prazos de alteração de contrato da REN 1.000/2021.`);
-      }
+      demanda.parcelas.forEach((p, i) => {
+        const base = { id: 'demanda-' + i, area: 'demanda', economiaMes: p.custoAtual - p.custoRecomendado, valor: p.recomendada };
+        if (p.ultrapassagem) r.push(Object.assign(base, { texto: `${p.nome}: a medição (${U.num(p.medida, 0)} kW) passa da contratada (${U.num(p.contratada, 0)} kW) e gera multa de ultrapassagem. Contratar cerca de ${p.recomendada} kW.` }));
+        else if (p.contratada - p.recomendada >= 5) r.push(Object.assign(base, { texto: `${p.nome}: com a nova agenda o pico fica em ${U.num(p.medida, 0)} kW. Dá para reduzir a demanda contratada de ${U.num(p.contratada, 0)} kW para cerca de ${p.recomendada} kW (${U.brl(p.custoAtual - p.custoRecomendado)} a menos por mês), respeitando os prazos de alteração de contrato da REN 1.000/2021.` }));
+      });
     }
     if (solar && solar.recomendado) {
       const rec = solar.recomendado, at = solar.linhas.find((l) => l.kWp === solar.atual);
@@ -214,17 +218,25 @@
         const limite = solar.noLimite
           ? ` Esse tamanho já encosta no limite regulatório (inversores até ${U.num(solar.limiteKW, 0)} kW ${solar.grupoA ? 'de demanda contratada' : 'de microgeração'}).`
           : '';
-        r.push(`Geração solar: o melhor retorno está perto de ${rec.kWp} kWp (VPL de ${U.brl(rec.vpl)} em 25 anos, retorno simples de ${U.num(rec.payback, 1)} anos), com ${U.num(corte, 0)} kWh/mês cortados pelo limite de injeção e pelo volt-watt.${limite}`);
+        r.push({
+          id: 'solar', area: 'solar', valor: rec.kWp,
+          economiaMes: Math.max(0, rec.economiaMes - (at ? at.economiaMes : 0)),
+          investimento: Math.max(0, rec.kWp - (solar.atual || 0)) * ((solar.premissas && solar.premissas.custoKWp) || 0),
+          texto: `Geração solar: o melhor retorno está perto de ${rec.kWp} kWp (VPL de ${U.brl(rec.vpl)} em 25 anos, retorno simples de ${U.num(rec.payback, 1)} anos), com ${U.num(corte, 0)} kWh/mês cortados pelo limite de injeção e pelo volt-watt.${limite}`,
+        });
         if (demanda && demanda.aplica && solar.grupoA) {
           const recDem = Math.max(...demanda.parcelas.map((p) => p.recomendada));
           const inversor = Math.ceil(rec.kWp / solar.fatorDCAC);
-          if (inversor > recDem) r.push(`Atenção ao combinar as duas medidas: a solar de ${rec.kWp} kWp precisa de cerca de ${inversor} kW de inversor, e a demanda contratada não pode ficar abaixo disso. Reduzir a demanda para ${recDem} kW limita a usina a uns ${Math.round(recDem * solar.fatorDCAC)} kWp.`);
+          if (inversor > recDem) r.push({ id: 'solar-demanda', area: 'solar', economiaMes: 0, conflito: true, texto: `Atenção ao combinar as duas medidas: a solar de ${rec.kWp} kWp precisa de cerca de ${inversor} kW de inversor, e a demanda contratada não pode ficar abaixo disso. Reduzir a demanda para ${recDem} kW limita a usina a uns ${Math.round(recDem * solar.fatorDCAC)} kWp.` });
         }
       }
     }
     if (reat && reat.grupoA && reat.custoMes > 20) {
-      r.push(`Fator de potência: o reativo excedente custa cerca de ${U.brl(reat.custoMes)} por mês. Um banco de capacitores automático de ${reat.banco} kvar reduz esse valor para ${U.brl(reat.custoMesComBanco)}.`);
+      r.push({ id: 'reativo', area: 'qualidade', economiaMes: reat.custoMes - reat.custoMesComBanco, valor: reat.banco, texto: `Fator de potência: o reativo excedente custa cerca de ${U.brl(reat.custoMes)} por mês. Um banco de capacitores automático de ${reat.banco} kvar reduz esse valor para ${U.brl(reat.custoMesComBanco)}.` });
     }
     return r;
   };
+
+  /** Recomendações em texto para o painel e o relatório. */
+  D.recomendacoes = function (ctx) { return D.itens(ctx).map((i) => i.texto); };
 })(typeof window !== 'undefined' ? window : globalThis);

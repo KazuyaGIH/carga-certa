@@ -2,12 +2,15 @@
 (function () {
   'use strict';
   const CC = window.CC;
-  const U = CC.util, TA = CC.tarifas, MO = CC.modelo, OT = CC.otim, DG = CC.diag, IA = CC.iaLocal, NV = CC.iaNuvem, EV = CC.eventos, GR = CC.graficos;
+  const U = CC.util, TA = CC.tarifas, MO = CC.modelo, OT = CC.otim, DG = CC.diag, IA = CC.iaLocal, NV = CC.iaNuvem, EV = CC.eventos, GR = CC.graficos, RV = CC.revisao;
   const $ = (s, el) => (el || document).querySelector(s);
   const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
   const esc = U.esc;
   const LS = 'cargaCerta.v1';
   const LS_CHAVE = (m) => 'cargaCerta.chave.' + m;
+  const LS_FILA = 'cargaCerta.fila.v1';
+  const LS_ENG = 'cargaCerta.engenheiro.v1';
+  const SITE = /^https?:$/.test(location.protocol) ? location.origin + location.pathname.replace(/index\.html$/, '') : 'https://kazuyagih.github.io/carga-certa/';
   const lsGet = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
   const lsSet = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { /* navegação privada */ } };
 
@@ -18,6 +21,8 @@
     historico: [], pendentes: null, impacto: null,
     ocupado: false, sujo: false, execucao: 0,
     motor: 'local', chaves: {}, modeloGemini: NV.MODELO_GEMINI,
+    // ponte com o engenheiro
+    fila: [], perfil: { nome: '', registro: '', organizacao: '', especialidades: [] }, casoId: null, ordemFila: 'reais', soCombina: false,
   };
 
   // ================================================================== utilidades da tela
@@ -49,7 +54,8 @@
     S.ocupado = v;
     // Enquanto o plano é refeito, nada que mude o cenário pode ser clicado.
     for (const id of ['btnOtimizar', 'btnOtimizar2', 'btnAplicar', 'btnDescartar', 'btnDiag', 'btnRelatorio', 'btnRelatorio2',
-      'btnDesfazer', 'selExemplo', 'btnAbrir', 'btnInterpretar', 'inpAgora']) { const b = $('#' + id); if (b) b.disabled = v; }
+      'btnDesfazer', 'selExemplo', 'btnAbrir', 'btnInterpretar', 'inpAgora',
+      'btnPedir', 'btnBaixarPedido', 'btnExemplosFila', 'btnImportarPedido']) { const b = $('#' + id); if (b) b.disabled = v; }
     $$('[data-avanca]').forEach((b) => { b.disabled = v; });
     if (!v) $('#btnDesfazer').disabled = !S.historico.length;
     $('#btnOtimizar').textContent = v ? 'Otimizando…' : 'Otimizar agenda';
@@ -98,7 +104,10 @@
   }
 
   function salvarLocal() {
-    lsSet(LS, JSON.stringify({ cen: S.cen, base: S.serialBase, otim: S.serialOtim, motor: S.motor, modeloGemini: S.modeloGemini }));
+    lsSet(LS, JSON.stringify({
+      cen: S.cen, base: S.serialBase, otim: S.serialOtim, motor: S.motor, modeloGemini: S.modeloGemini,
+      diag: RV.serializarDiag(S.diag), casoId: S.casoId,
+    }));
   }
   function carregarLocal() {
     const t = lsGet(LS);
@@ -110,9 +119,9 @@
     S.cen = normalizarCenario(cen);
     S.serialBase = planos && planos.base ? planos.base : null;
     S.serialOtim = planos && planos.otim ? planos.otim : null;
-    S.historico = []; S.impacto = null; S.pendentes = null; S.diag = null; S.sujo = false;
+    S.historico = []; S.impacto = null; S.pendentes = null; S.diag = null; S.sujo = false; S.casoId = null;
     S.versao = (S.versao || 0) + 1;
-    renderFormularios(); renderCartoes(); renderChips();
+    renderFormularios(); renderCartoes(); renderChips(); renderPedidoCampos();
   }
 
   function marcarSujo() {
@@ -201,6 +210,7 @@
     renderCabecalho(); renderKPIs(); renderFrase(); renderConta(); renderMudancas(); renderAvisos();
     renderDias(); renderTabelaEtapas(); renderEventosLado(); renderRelogio();
     renderRecomendacoes(); renderDiagTextos();
+    renderPedido(); renderFila(); renderRevisao();
     $('#avisoSujo').hidden = !S.sujo;
     renderGraficosDaAba();
   }
@@ -813,12 +823,15 @@
 
   // ================================================================== diagnóstico
   function renderRecomendacoes() {
-    const rec = DG.recomendacoes({
-      avBase: S.avBase, avOtim: S.avOtim, modalidades: S.diag && S.diag.modalidades,
-      demanda: S.diagRapido.demanda, solar: S.diag && S.diag.solar, reat: S.diagRapido.reat,
+    // Com um parecer válido, cada recomendação mostra a decisão do engenheiro.
+    const pa = parecerAtual();
+    const par = pa && pa.valido ? pa.p : null;
+    const h = itensAtuais().map((it) => {
+      const pi = par && par.itens.find((x) => x.id === it.id);
+      return `<li>${esc(it.texto)}${pi ? ' ' + tagDecisao(pi.decisao) : ''}${pi && pi.nota ? `<span class="rec-nota">Engenheiro: ${esc(pi.nota)}</span>` : ''}</li>`;
     });
-    if (!S.diag) rec.push('Para completar o diagnóstico (modalidade tarifária e tamanho da usina solar), clique em "Comparar tarifas e dimensionar a solar". Leva alguns segundos.');
-    $('#listaRecom').innerHTML = rec.map((r) => `<li>${esc(r)}</li>`).join('');
+    if (!S.diag) h.push('<li>Para completar o diagnóstico (modalidade tarifária e tamanho da usina solar), clique em "Comparar tarifas e dimensionar a solar". Leva alguns segundos.</li>');
+    $('#listaRecom').innerHTML = h.join('');
   }
 
   function renderDiagTextos() {
@@ -885,6 +898,7 @@
       S.diag = { modalidades, solar };
       renderRecomendacoes(); renderDiagTextos();
       if (S.aba === 'diagnostico') renderDiagGraficos();
+      salvarLocal();
       return true;
     } catch (e) {
       console.error(e);
@@ -933,8 +947,20 @@
       h += `<section><h2>5. Modalidade tarifária (R$ por mês)</h2><table><thead><tr><th>Modalidade</th><th class="num">Agenda de hoje</th><th class="num">Replanejada</th></tr></thead><tbody>${m.linhas.map((l) => `<tr><td>${esc(l.nome)}${l.atual ? ' (atual)' : ''}${l.mesmoGrupo ? '' : ' (outro grupo)'}</td><td class="num">${U.brl(l.contaHoje)}</td><td class="num">${U.brl(l.contaReplanejada)}</td></tr>`).join('')}</tbody></table></section>`;
       h += `<section><h2>6. Geração solar</h2><table><thead><tr><th>Usina</th><th class="num">Economia/mês</th><th class="num">Cortado kWh/mês</th><th class="num">Retorno</th><th class="num">VPL 25 anos</th></tr></thead><tbody>${s.linhas.map((l) => `<tr><td>${l.kWp} kWp${l === s.recomendado ? ' (sugerida)' : ''}${l.kWp === s.atual ? ' (atual)' : ''}</td><td class="num">${U.brl(l.economiaMes)}</td><td class="num">${U.num(l.cortLimMes + l.cortVWMes)}</td><td class="num">${l.kWp && Number.isFinite(l.payback) ? U.num(l.payback, 1) + ' anos' : '—'}</td><td class="num">${l.kWp ? U.brl(l.vpl) : '—'}</td></tr>`).join('')}</tbody></table></section>`;
     }
-    h += `<section><h2>Premissas</h2><p class="sutil">Tarifas de aplicação da Enel SP homologadas pela ANEEL (REH nº 3.596/2026), com ${U.pct(+cen.tarifa.tributos || 0, 1)} de tributos. Mês estimado a partir da semana planejada (× ${U.num(inst.fatorMes, 2)}). Energia injetada valorada pela Lei 14.300/2022 (${U.pct(+cen.tarifa.fioBPercentual || 0)} do Fio B não compensado). Geração solar por modelo de céu claro ajustado pelo céu previsto de cada dia. Os valores são estimativas e devem ser conferidos com medições e faturas reais.</p></section>
-      <div class="assinatura"><div>Engenheiro(a) responsável · CREA</div><div>Data e assinatura</div></div>`;
+    let assinatura = '<div class="assinatura"><div>Engenheiro(a) responsável · CREA</div><div>Data e assinatura</div></div>';
+    const pa = parecerAtual();
+    if (pa && pa.valido) {
+      const p = pa.p, e = p.engenheiro || {};
+      const quem = `${esc(e.nome)}${e.registro ? ` · ${esc(e.registro)}` : ''}`;
+      h += `<section><h2>${S.diag ? 7 : 5}. Parecer do engenheiro</h2>
+        <p>${quem}${e.organizacao ? ` · ${esc(e.organizacao)}` : ''} · emitido em ${esc(dataHora(p.emitidoEm))}: ${esc(RV.textoResumo(p.resumo || {}))}.</p>
+        <table><thead><tr><th>Recomendação</th><th>Decisão</th><th>Ajuste ou observação</th></tr></thead><tbody>${p.itens.map((i) => `<tr><td>${esc(i.texto)}</td><td>${esc((RV.de(RV.DECISOES, i.decisao) || {}).tag || '')}</td><td>${esc(i.nota || '')}${i.totalConferir ? `<br><span class="sutil">Conferido em campo: ${Array.isArray(i.conferidos) ? i.conferidos.length : 0} de ${+i.totalConferir} itens</span>` : ''}</td></tr>`).join('')}</tbody></table>
+        ${p.observacoes ? `<p><strong>Observações:</strong> ${esc(p.observacoes)}</p>` : ''}</section>`;
+      assinatura = `<div class="assinatura"><div>${quem}</div><div>Data e assinatura</div></div>`;
+    } else if (pa) {
+      h += `<section><h2>Parecer do engenheiro</h2><p class="sutil">Há um parecer de ${esc(dataHora(pa.p.emitidoEm))}, mas os dados da fábrica mudaram depois dele. É preciso pedir uma nova avaliação.</p></section>`;
+    }
+    h += `<section><h2>Premissas</h2><p class="sutil">Tarifas de aplicação da Enel SP homologadas pela ANEEL (REH nº 3.596/2026), com ${U.pct(+cen.tarifa.tributos || 0, 1)} de tributos. Mês estimado a partir da semana planejada (× ${U.num(inst.fatorMes, 2)}). Energia injetada valorada pela Lei 14.300/2022 (${U.pct(+cen.tarifa.fioBPercentual || 0)} do Fio B não compensado). Geração solar por modelo de céu claro ajustado pelo céu previsto de cada dia. Os valores são estimativas e devem ser conferidos com medições e faturas reais.</p></section>${assinatura}`;
     $('#relatorio').innerHTML = h;
     setTimeout(() => window.print(), 50);
   }
@@ -946,8 +972,11 @@
       avBase: b, avOtim: o, modalidades: S.diag && S.diag.modalidades,
       demanda: S.diagRapido.demanda, solar: S.diag && S.diag.solar, reat: S.diagRapido.reat,
     });
+    const c = lerContato();
     return [
-      `Empresa: ${cen.nome}`,
+      `Empresa: ${cen.nome}${c.cidade ? ` (${c.cidade})` : ''}`,
+      ...(c.contato ? [`Contato: ${c.contato}`] : []),
+      ...(c.mensagem ? [`Recado: ${c.mensagem}`] : []),
       `Tarifa: ${TA.MODALIDADES[cen.tarifa.modalidade].nome} (Enel SP, ANEEL REH nº 3.596/2026)`,
       `Semana analisada: ${U.fmtDia(t0)} a ${U.fmtDia(t0 + (cen.dias - 1) * 1440)}`,
       '',
@@ -959,13 +988,13 @@
       'Recomendações para validar:',
       ...rec.map((r, i) => `${i + 1}. ${r}`),
       '',
-      'O relatório completo segue em PDF (gerado pelo Carga Certa).',
+      `Para revisar no Carga Certa: abra ${SITE} , aba Engenheiros, "Importar pedido", e escolha o arquivo do pedido (botão "Baixar pedido").`,
     ].join('\n');
   }
   function emailEngenheiro() {
     const para = $('#inpEngenheiro').value.trim();
-    const assunto = `Pedido de validação: diagnóstico energético de ${S.cen.nome}`;
-    let corpo = `Olá,\n\nVocê poderia conferir o diagnóstico energético abaixo? Anexei o relatório em PDF.\n\n${resumoParaEngenheiro()}\n\nObrigado!`;
+    const assunto = `Pedido de avaliação: diagnóstico energético de ${S.cen.nome}`;
+    let corpo = `Olá,\n\nVocê poderia avaliar o diagnóstico energético abaixo? Vou anexar o pedido (arquivo .json) e, se quiser, o relatório em PDF.\n\n${resumoParaEngenheiro()}\n\nObrigado!`;
     if (corpo.length > 1800) corpo = corpo.slice(0, 1790) + '…';
     const dest = encodeURIComponent(para).replace(/%40/g, '@');
     window.location.href = `mailto:${dest}?subject=${encodeURIComponent(assunto)}&body=${encodeURIComponent(corpo)}`;
@@ -982,26 +1011,471 @@
     toast(ok ? 'Resumo copiado. Cole no e-mail ou no WhatsApp.' : 'Não consegui copiar automaticamente neste navegador.', ok ? '' : 'erro');
   }
 
+  // ================================================================== avaliação por engenheiro: lado da fábrica
+  function planosAtuais() { return { base: S.serialBase, otim: S.serialOtim }; }
+  function assinaturaAtual() { return RV.assinaturaDados(S.cen, planosAtuais()); }
+  function itensAtuais() {
+    return DG.itens({
+      avBase: S.avBase, avOtim: S.avOtim, modalidades: S.diag && S.diag.modalidades,
+      demanda: S.diagRapido.demanda, solar: S.diag && S.diag.solar, reat: S.diagRapido.reat,
+    });
+  }
+  /** Parecer guardado no cenário da tela e se ele ainda vale (os dados não mudaram depois dele). */
+  function parecerAtual() {
+    const p = S.cen && S.cen.revisao && S.cen.revisao.parecer;
+    if (!p || typeof p !== 'object' || !Array.isArray(p.itens)) return null;
+    const limpo = Object.assign({}, p, { itens: p.itens.filter((i) => i && typeof i === 'object') });
+    return { p: limpo, valido: !!S.serialOtim && p.assinatura === assinaturaAtual() };
+  }
+  function dataHora(iso) {
+    const d = new Date(iso);
+    return Number.isFinite(d.getTime()) ? d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+  }
+  const nomeModalidade = (m) => (TA.MODALIDADES[m] ? TA.MODALIDADES[m].nome : String(m || ''));
+  function tagDecisao(d) { const x = RV.de(RV.DECISOES, d); return x ? `<span class="tag ${x.classe}">${x.tag}</span>` : ''; }
+  function revisaoDoCenario() {
+    if (!S.cen.revisao || typeof S.cen.revisao !== 'object') S.cen.revisao = {};
+    return S.cen.revisao;
+  }
+
+  function renderPedidoCampos() {
+    const rv = (S.cen && S.cen.revisao) || {};
+    const c = rv.contato || rv.pedido || {};
+    $('#pedCidade').value = c.cidade || '';
+    $('#pedContato').value = c.contato || '';
+    $('#pedMensagem').value = c.mensagem || '';
+  }
+  function lerContato() {
+    return { cidade: $('#pedCidade').value.trim().slice(0, 80), contato: $('#pedContato').value.trim().slice(0, 120), mensagem: $('#pedMensagem').value.trim().slice(0, 600) };
+  }
+  function salvarContato() { revisaoDoCenario().contato = lerContato(); salvarLocal(); }
+
+  /** Confere se a agenda e o diagnóstico estão em dia e monta o pedido com os dados da tela. */
+  async function prepararPedido() {
+    if (S.ocupado || !S.inst) return null;
+    if (S.sujo) { toast('Os dados mudaram desde o último planejamento. Clique em "Otimizar agenda" antes de pedir a avaliação.', 'erro'); return null; }
+    const pa = parecerAtual();
+    if (pa && pa.valido && !(await confirmar('Já existe um parecer para estes dados. Pedir outra avaliação tira esse parecer da tela.', 'Pedir outra avaliação'))) return null;
+    if (!S.diag) {
+      toast('Calculando o diagnóstico completo para o pedido…');
+      if (!(await rodarDiagnostico())) return null;
+    }
+    if (S.ocupado || S.sujo || !S.diag) return null;
+    const itens = itensAtuais();
+    if (!itens.length) { toast('O diagnóstico não encontrou recomendações para um engenheiro avaliar.', 'erro'); return null; }
+    const planos = planosAtuais();
+    const assin = RV.assinaturaDados(S.cen, planos);
+    // O mesmo pedido mandado de novo (mesmos dados, ainda sem parecer) é atualizado, não duplicado.
+    const igual = S.fila.find((x) => x.assinatura === assin && x.status !== 'parecer');
+    return RV.montarPedido({
+      cen: S.cen, planos, diag: S.diag, avBase: S.avBase, avOtim: S.avOtim, itens,
+      meta: Object.assign(lerContato(), { id: igual ? igual.id : null }),
+    });
+  }
+  function registrarPedidoNoCenario(p) {
+    const rv = revisaoDoCenario();
+    rv.contato = lerContato();
+    rv.pedido = U.clonar(p.cenario.revisao.pedido);
+    delete rv.parecer; // o parecer anterior não vale para o pedido novo
+    salvarLocal();
+  }
+  async function pedirAvaliacao() {
+    const p = await prepararPedido();
+    if (!p) return;
+    const i = S.fila.findIndex((x) => x.id === p.id);
+    const comecado = i >= 0 && S.fila[i].status === 'revisao';
+    if (i >= 0) { p.rascunho = S.fila[i].rascunho; p.status = S.fila[i].status; S.fila[i] = p; } else S.fila.push(p);
+    gravarFila();
+    registrarPedidoNoCenario(p);
+    renderPedido(); renderRecomendacoes(); renderFila(); renderRevisao();
+    toast(comecado ? 'Pedido atualizado na fila; o engenheiro já tinha começado a revisar.' : 'Pedido enviado. Veja na aba Engenheiros como ele chega para o engenheiro.');
+  }
+  async function baixarPedido() {
+    const p = await prepararPedido();
+    if (!p) return;
+    const arq = Object.assign({}, p);
+    delete arq.status; delete arq.rascunho; delete arq.parecer;
+    baixarJSON(arq, `pedido-${slug(S.cen.nome)}.json`);
+    registrarPedidoNoCenario(p);
+    renderPedido(); renderRecomendacoes();
+    toast('Pedido baixado. Mande o arquivo ao engenheiro; ele abre na aba Engenheiros, em "Importar pedido".');
+  }
+
+  function renderPedido() {
+    const el = $('#estadoPedido');
+    if (!S.cen) { el.innerHTML = ''; return; }
+    const rv = S.cen.revisao || {};
+    const pa = parecerAtual();
+    if (pa) {
+      const p = pa.p, e = p.engenheiro || {};
+      el.innerHTML = `<div class="parecer${pa.valido ? '' : ' desatualizado'}">
+        <p><strong>Parecer de ${esc(e.nome || 'engenheiro(a)')}</strong>${e.registro ? ` (${esc(e.registro)})` : ''}${e.organizacao ? `, ${esc(e.organizacao)}` : ''}, em ${esc(dataHora(p.emitidoEm))}: ${esc(RV.textoResumo(p.resumo || {}))}.</p>
+        ${pa.valido ? '' : '<p class="cartao-aviso">Os dados da fábrica mudaram depois deste parecer. Ele vale para os dados de quando foi emitido; peça uma nova avaliação.</p>'}
+        <ol class="parecer-itens">${p.itens.map((i) => `<li>${tagDecisao(i.decisao)} ${esc(i.texto)}${i.nota ? `<span class="rec-nota">Engenheiro: ${esc(i.nota)}</span>` : ''}</li>`).join('')}</ol>
+        ${p.observacoes ? `<p class="parecer-obs"><strong>Observações:</strong> ${esc(p.observacoes)}</p>` : ''}
+      </div>`;
+    } else if (rv.pedido && typeof rv.pedido === 'object') {
+      const naFila = S.fila.some((x) => x.id === rv.pedido.id);
+      el.innerHTML = `<p class="estado-pedido">Pedido enviado em ${esc(dataHora(rv.pedido.criadoEm))}. Aguardando o parecer do engenheiro.${naFila ? ' <button type="button" class="link" data-ir="engenheiros">Ver como o engenheiro recebe</button>' : ''}</p>`;
+    } else el.innerHTML = '';
+  }
+
+  // ================================================================== avaliação por engenheiro: lado do engenheiro
+  function lerFila() {
+    try {
+      const j = JSON.parse(lsGet(LS_FILA) || '[]');
+      return Array.isArray(j) ? j.filter((p) => p && typeof p.id === 'string' && p.cenario && Array.isArray(p.itens)) : [];
+    } catch (e) { return []; }
+  }
+  let avisouFilaCheia = false;
+  let timerFila = null;
+  function gravarFila() {
+    clearTimeout(timerFila);
+    try { localStorage.setItem(LS_FILA, JSON.stringify(S.fila)); return true; } catch (e) {
+      if (!avisouFilaCheia) { avisouFilaCheia = true; toast('Não consegui guardar a fila neste navegador (sem espaço ou navegação privada). Ela vale até você fechar a página.', 'erro'); }
+      return false;
+    }
+  }
+  function gravarFilaDepois() { clearTimeout(timerFila); timerFila = setTimeout(gravarFila, 400); }
+  function lerPreferenciasEng() {
+    try { const j = JSON.parse(lsGet(LS_ENG) || 'null'); return j && typeof j === 'object' ? j : {}; } catch (e) { return {}; }
+  }
+  function gravarPreferenciasEng() { lsSet(LS_ENG, JSON.stringify({ perfil: S.perfil, ordemFila: S.ordemFila, soCombina: S.soCombina })); }
+
+  function renderPerfil() {
+    const p = S.perfil;
+    $('#engNome').value = p.nome || ''; $('#engRegistro').value = p.registro || ''; $('#engOrg').value = p.organizacao || '';
+    $$('#engEsp input').forEach((c) => { c.checked = p.especialidades.includes(c.value); });
+    $('#selOrdem').value = S.ordemFila; $('#chkCombina').checked = S.soCombina;
+  }
+  function htmlAssinaComo() {
+    const e = S.perfil;
+    return e.nome
+      ? `O parecer sai em nome de <strong>${esc(e.nome)}</strong>${e.registro ? `, ${esc(e.registro)}` : ''}${e.organizacao ? `, ${esc(e.organizacao)}` : ''}.`
+      : 'Preencha seu nome no perfil, no alto desta aba, para emitir o parecer.';
+  }
+  function salvarPerfil() {
+    S.perfil = {
+      nome: $('#engNome').value.trim().slice(0, 80), registro: $('#engRegistro').value.trim().slice(0, 40),
+      organizacao: $('#engOrg').value.trim().slice(0, 80), especialidades: $$('#engEsp input:checked').map((c) => c.value),
+    };
+    gravarPreferenciasEng();
+    const a = $('#assinaComo');
+    if (a) a.innerHTML = htmlAssinaComo();
+  }
+
+  function renderFila() {
+    const el = $('#fila');
+    if (!S.fila.length) {
+      el.innerHTML = '<li class="vazio">Nenhum pedido ainda. Clique em "Carregar pedidos de exemplo" ou mande o cenário atual pela aba Diagnóstico, em "Pedir avaliação".</li>';
+      return;
+    }
+    const esp = S.perfil.especialidades;
+    const lista = RV.ordenar(S.fila, S.ordemFila, esp, S.soCombina);
+    if (!lista.length) { el.innerHTML = '<li class="vazio">Nenhum pedido combina com as especialidades marcadas no seu perfil.</li>'; return; }
+    el.innerHTML = lista.map((p) => {
+      const st = RV.de(RV.STATUS, p.status) || RV.STATUS.aguardando;
+      const aberto = p.id === S.casoId;
+      const combina = esp.length > 0 && RV.combina(p, esp) > 0;
+      const areas = RV.areasDoPedido(p).map((a) => {
+        const v = (p.porArea && +p.porArea[a]) || 0;
+        const inv = p.itens.filter((i) => i.area === a).reduce((s, i) => s + (+i.investimento || 0), 0);
+        return `<span class="tag${esp.includes(a) ? ' ok' : ''}"${inv > 0 ? ` data-dica="${esc(`Exige investimento de cerca de ${U.brl(inv)}.`)}"` : ''}>${esc(RV.de(RV.AREAS, a) || a)}${v > 0.5 ? ` · ${U.brl(v)}` : ''}</span>`;
+      }).join('');
+      const acao = aberto ? 'Ir para a revisão' : p.status === 'parecer' ? 'Ver o parecer' : 'Abrir e revisar';
+      const invTotal = p.itens.reduce((s, i) => s + (+i.investimento || 0), 0);
+      const ecoSolar = (p.porArea && +p.porArea.solar) || 0;
+      return `<li class="pedido${combina ? ' combina' : ''}${aberto ? ' aberto' : ''}">
+        <div class="pedido-cab"><strong>${esc(p.empresa)}</strong><span class="tag ${st.classe}">${st.texto}</span></div>
+        <p class="pedido-sub">${esc(p.cidade || 'cidade não informada')} · ${esc(nomeModalidade(p.modalidade))} · pedido em ${esc(dataHora(p.criadoEm))}</p>
+        <p class="pedido-num">Conta hoje ${U.brl(+p.contaHoje)} por mês · economia possível <strong>${U.brl(+p.economiaMes)} por mês (${U.pct(+p.percentual || 0)} da conta)</strong></p>
+        ${invTotal > 0 ? `<p class="pedido-sub">A usina solar (até ${U.brl(ecoSolar)} por mês) exige investimento de cerca de ${U.brl(invTotal)}.</p>` : ''}
+        <div class="pedido-areas">${areas}</div>
+        ${p.mensagem ? `<p class="pedido-msg">“${esc(p.mensagem)}”</p>` : ''}
+        <div class="linha-botoes"><button type="button" class="btn mini primario" data-abrir="${esc(p.id)}">${acao}</button><button type="button" class="btn mini" data-remover="${esc(p.id)}">Remover</button></div>
+      </li>`;
+    }).join('');
+  }
+
+  function casoAberto() { return S.casoId ? S.fila.find((x) => x.id === S.casoId) || null : null; }
+
+  /** Abre o caso na tela (dados, agenda e diagnóstico do pedido) para o engenheiro revisar. */
+  async function abrirCaso(id) {
+    if (S.ocupado) return;
+    const p = S.fila.find((x) => x.id === id);
+    if (!p) return;
+    const mesmos = !!S.serialOtim && assinaturaAtual() === p.assinatura;
+    if (!mesmos) {
+      if ((S.historico.length || S.sujo) && !(await confirmar('Abrir o caso troca os dados que estão na tela pelos do pedido. Para guardar o que fez, use "Salvar" antes.', 'Abrir o caso'))) return;
+      if (S.ocupado) return;
+      try { definirCenario(p.cenario, p.planos); } catch (e) { console.error(e); toast('Não consegui abrir este pedido: ' + e.message, 'erro'); return; }
+      S.diag = RV.restaurarDiag(p.diag);
+      if (!avaliarAtual()) return;
+    } else if (!S.diag && p.diag) {
+      S.diag = RV.restaurarDiag(p.diag);
+    }
+    // O cenário na tela passa a ser o deste pedido, com o parecer, se já houver.
+    const rv = revisaoDoCenario();
+    rv.pedido = U.clonar((p.cenario.revisao && p.cenario.revisao.pedido) || { id: p.id, criadoEm: p.criadoEm });
+    if (p.parecer) rv.parecer = U.clonar(p.parecer); else delete rv.parecer;
+    S.casoId = p.id;
+    if (p.status === 'aguardando') { p.status = 'revisao'; gravarFila(); }
+    salvarLocal();
+    renderizar();
+    const painel = $('#painelRevisao');
+    if (!painel.hidden && S.aba === 'engenheiros') painel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  const ROTULO_NOTA = { aprovada: 'Observação (opcional)', ajuste: 'Qual é o ajuste', recusada: 'Por que não aprovar' };
+  function renderRevisao() {
+    const painel = $('#painelRevisao');
+    const p = casoAberto();
+    if (!p) { painel.hidden = true; painel.innerHTML = ''; return; }
+    painel.hidden = false;
+    const r = p.rascunho || {}, dec = r.decisoes || {};
+    const st = RV.de(RV.STATUS, p.status) || RV.STATUS.aguardando;
+    const mesmos = !!S.serialOtim && assinaturaAtual() === p.assinatura;
+    const itens = p.itens.map((it, i) => {
+      const d = RV.de(dec, it.id) || {};
+      const conf = RV.conferir(it.id);
+      const marcados = new Set(Array.isArray(d.conferidos) ? d.conferidos : []);
+      return `<li class="item-rev" data-item="${esc(it.id)}">
+        <div class="item-cab"><span class="item-num">${i + 1}.</span><span class="tag">${esc(RV.de(RV.AREAS, it.area) || it.area)}</span>${+it.economiaMes > 0.5 ? `<span class="item-eco">${U.brl(+it.economiaMes)} por mês</span>` : ''}${RV.exigeART(it.id) ? '<span class="tag alerta" data-dica="Projeto e instalação com Anotação de Responsabilidade Técnica (ART) registrada no CREA.">exige ART</span>' : ''}</div>
+        <p class="item-texto">${esc(it.texto)}</p>
+        ${conf.length ? `<div class="conferir"><p class="conferir-tit">O que conferir <span data-conta>${marcados.size} de ${conf.length}</span></p>${conf.map((c, k) => `<label class="check"><input type="checkbox" data-conf="${k}"${marcados.has(k) ? ' checked' : ''}><span>${esc(c)}</span></label>`).join('')}</div>` : ''}
+        <div class="seg decisao" role="group" aria-label="Decisão sobre a recomendação ${i + 1}">${Object.entries(RV.DECISOES).map(([k, x]) => `<button type="button" data-dec="${k}" class="dec-${k}${d.decisao === k ? ' ativo' : ''}" aria-pressed="${d.decisao === k}">${x.rotulo}</button>`).join('')}</div>
+        <label class="campo"><span data-rotulo>${RV.de(ROTULO_NOTA, d.decisao) || ROTULO_NOTA.aprovada}</span><textarea data-nota rows="2" placeholder="O que muda e por quê">${esc(d.nota || '')}</textarea></label>
+      </li>`;
+    }).join('');
+    painel.innerHTML = `
+      <div class="painel-cab"><h3>Revisão: ${esc(p.empresa)}</h3><span class="tag ${st.classe}">${st.texto}</span></div>
+      <p class="nota">${esc(p.cidade || 'cidade não informada')} · ${esc(nomeModalidade(p.modalidade))} · pedido em ${esc(dataHora(p.criadoEm))}${p.contato ? ` · contato: ${esc(p.contato)}` : ''}</p>
+      ${p.mensagem ? `<blockquote class="recado">${esc(p.mensagem)}</blockquote>` : ''}
+      ${mesmos ? '' : '<p class="cartao-aviso">Os dados na tela não são mais os deste pedido; a revisão vale para os dados do pedido. <button type="button" class="link" data-recarregar>Voltar aos dados do pedido</button></p>'}
+      <p>Os números deste caso estão nas abas Visão geral, Agenda, Energia e tarifa e Diagnóstico. Para cada recomendação, marque o que conferiu e decida.</p>
+      <ol class="itens-rev">${itens}</ol>
+      <label class="campo">Observações gerais para a fábrica<textarea id="revObs" rows="3" placeholder="Ex.: próximos passos, medições a fazer, documentos a pedir">${esc(r.observacoes || '')}</textarea></label>
+      <p class="nota" id="assinaComo">${htmlAssinaComo()}</p>
+      <div id="revProblemas" class="avisos"></div>
+      <div class="linha-botoes">
+        <button type="button" class="btn primario" id="btnEmitir">${p.parecer ? 'Atualizar parecer' : 'Emitir parecer'}</button>
+        <button type="button" class="btn" id="btnBaixarParecer"${p.parecer ? '' : ' disabled'}>Baixar parecer para a fábrica</button>
+        <button type="button" class="btn" id="btnRelatorioParecer"${p.parecer ? '' : ' disabled'}>Relatório com o parecer</button>
+        <button type="button" class="btn" id="btnFecharCaso">Fechar caso</button>
+      </div>
+      ${p.parecer ? `<p class="nota">Parecer emitido em ${esc(dataHora(p.parecer.emitidoEm))}. Neste navegador, a fábrica já vê o resultado na aba Diagnóstico. Para mandar a ela, baixe o parecer e envie o arquivo; ela abre com o botão "Abrir", no alto.</p>` : ''}`;
+  }
+
+  function rascunhoDe(p) {
+    if (!p.rascunho || typeof p.rascunho !== 'object') p.rascunho = { decisoes: {}, observacoes: '' };
+    if (!p.rascunho.decisoes || typeof p.rascunho.decisoes !== 'object') p.rascunho.decisoes = {};
+    return p.rascunho;
+  }
+  function decisaoDe(p, id) {
+    const d = rascunhoDe(p).decisoes;
+    const atual = RV.de(d, id);
+    if (!atual || typeof atual !== 'object') d[id] = {};
+    return d[id];
+  }
+  function cliqueRevisao(e) {
+    const p = casoAberto();
+    const b = e.target.closest('button');
+    if (!p || !b) return;
+    if (b.dataset.dec) {
+      const li = b.closest('[data-item]');
+      const d = decisaoDe(p, li.dataset.item);
+      d.decisao = b.dataset.dec;
+      $$('[data-dec]', li).forEach((x) => { const on = x.dataset.dec === d.decisao; x.classList.toggle('ativo', on); x.setAttribute('aria-pressed', String(on)); });
+      $('[data-rotulo]', li).textContent = ROTULO_NOTA[d.decisao];
+      if (p.status === 'aguardando') p.status = 'revisao';
+      gravarFila();
+      $('#revProblemas').innerHTML = '';
+      return;
+    }
+    if (b.hasAttribute('data-recarregar')) abrirCaso(p.id);
+    else if (b.id === 'btnEmitir') emitirParecer();
+    else if (b.id === 'btnBaixarParecer') baixarParecer();
+    else if (b.id === 'btnRelatorioParecer') relatorioDoCaso();
+    else if (b.id === 'btnFecharCaso') { S.casoId = null; salvarLocal(); renderFila(); renderRevisao(); }
+  }
+  function marcarConferido(e) {
+    const p = casoAberto(), t = e.target;
+    if (!p || t.dataset.conf == null) return;
+    const li = t.closest('[data-item]');
+    const d = decisaoDe(p, li.dataset.item);
+    const s = new Set(Array.isArray(d.conferidos) ? d.conferidos : []);
+    if (t.checked) s.add(+t.dataset.conf); else s.delete(+t.dataset.conf);
+    d.conferidos = Array.from(s).sort((a, b) => a - b);
+    const c = $('[data-conta]', li);
+    if (c) c.textContent = `${s.size} de ${RV.conferir(li.dataset.item).length}`;
+    gravarFila();
+  }
+  function digitarRevisao(e) {
+    const p = casoAberto(), t = e.target;
+    if (!p) return;
+    if (t.hasAttribute('data-nota')) { decisaoDe(p, t.closest('[data-item]').dataset.item).nota = t.value.slice(0, 1000); gravarFilaDepois(); }
+    else if (t.id === 'revObs') { rascunhoDe(p).observacoes = t.value.slice(0, 1500); gravarFilaDepois(); }
+  }
+
+  function emitirParecer() {
+    const p = casoAberto();
+    if (!p) return;
+    const r = rascunhoDe(p);
+    const prob = RV.validarParecer(p, r, S.perfil);
+    const box = $('#revProblemas');
+    if (prob.length) {
+      gravarFila();
+      box.innerHTML = prob.map((x) => `<div class="aviso">${esc(x)}</div>`).join('');
+      box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    p.parecer = RV.montarParecer(p, r, S.perfil);
+    p.status = 'parecer';
+    gravarFila();
+    // Com os dados do pedido na tela, a fábrica (neste navegador) vê o parecer na hora.
+    if (S.serialOtim && assinaturaAtual() === p.assinatura) {
+      const rv = revisaoDoCenario();
+      rv.pedido = U.clonar((p.cenario.revisao && p.cenario.revisao.pedido) || { id: p.id, criadoEm: p.criadoEm });
+      rv.parecer = U.clonar(p.parecer);
+      salvarLocal();
+    }
+    renderPedido(); renderRecomendacoes(); renderFila(); renderRevisao();
+    toast('Parecer emitido. A fábrica vê o resultado na aba Diagnóstico; para mandar a ela, use "Baixar parecer para a fábrica".');
+  }
+  function baixarParecer() {
+    const p = casoAberto();
+    if (!p || !p.parecer) return;
+    const cenario = U.clonar(p.cenario);
+    cenario.revisao = { pedido: U.clonar((p.cenario.revisao && p.cenario.revisao.pedido) || { id: p.id, criadoEm: p.criadoEm }), parecer: U.clonar(p.parecer) };
+    baixarJSON({ formato: 'carga-certa', versao: 1, salvoEm: new Date().toISOString(), cenario, planos: p.planos, diag: p.diag }, `parecer-${slug(p.empresa)}.json`);
+    toast('Parecer baixado. Mande o arquivo à fábrica; ela abre com o botão "Abrir", no alto.');
+  }
+  async function relatorioDoCaso() {
+    const p = casoAberto();
+    if (!p) return;
+    if (!S.serialOtim || assinaturaAtual() !== p.assinatura) {
+      await abrirCaso(p.id);
+      if (!S.serialOtim || assinaturaAtual() !== p.assinatura) return;
+    }
+    gerarRelatorio();
+  }
+
+  const PEDIDOS_EXEMPLO = {
+    metalurgica: { cidade: 'São Paulo (SP)', horasAtras: 30, mensagem: 'Pagamos multa de ultrapassagem de demanda em alguns meses e queremos saber se vale aumentar a usina solar.' },
+    padaria: { cidade: 'São Paulo (SP)', horasAtras: 4, mensagem: 'Mudamos para a Tarifa Branca e a conta subiu. Vale voltar para a convencional?' },
+  };
+  /** Planeja e diagnostica um exemplo do zero, sem mexer no que está na tela, e monta o pedido dele. */
+  async function montarPedidoExemplo(chave, aoProgresso, pular) {
+    const ex = CC.EXEMPLOS[chave], meta = PEDIDOS_EXEMPLO[chave] || { cidade: '', horasAtras: 1, mensagem: '' };
+    const cen = normalizarCenario(ex.cenario);
+    const instP = MO.construir(Object.assign({}, cen, { agora: `${cen.inicio}T00:00` }));
+    const base = OT.planoASAP(instP);
+    const otim = await OT.otimizar(instP, base, { referencia: null, estabilidade: 0, aoProgresso: (f) => aoProgresso(0.3 * f) });
+    const planos = { base: OT.serializar(instP, base), otim: OT.serializar(instP, otim) };
+    if (pular && pular(RV.assinaturaDados(cen, planos))) return null; // antes do diagnóstico, que é a parte demorada
+    const inst = MO.construir(cen);
+    const eb = new OT.Estado(inst, OT.desserializar(inst, planos.base));
+    const eo = new OT.Estado(inst, OT.desserializar(inst, planos.otim));
+    const avBase = OT.avaliar(inst, eb, true), avOtim = OT.avaliar(inst, eo, true);
+    const modalidades = await DG.compararModalidades(U.clonar(cen), planos.base, planos.otim, { replanejar: true, aoProgresso: (f) => aoProgresso(0.3 + 0.3 * f) });
+    const solar = await DG.dimensionarSolar(U.clonar(cen), planos.otim, { aoProgresso: (f) => aoProgresso(0.6 + 0.4 * f) });
+    const itens = DG.itens({ avBase, avOtim, modalidades, demanda: DG.demandaContratada(inst, avOtim), solar, reat: DG.reativos(inst, eo.exportar(), avOtim) });
+    const p = RV.montarPedido({
+      cen, planos, diag: { modalidades, solar }, avBase, avOtim, itens,
+      meta: { cidade: meta.cidade, contato: '', mensagem: meta.mensagem }, agora: new Date(Date.now() - meta.horasAtras * 3600e3),
+    });
+    p.exemplo = chave;
+    return p;
+  }
+  async function carregarPedidosExemplo() {
+    if (S.ocupado) return;
+    const faltam = Object.keys(CC.EXEMPLOS).filter((k) => !S.fila.some((x) => x.exemplo === k));
+    if (!faltam.length) { toast('Os pedidos de exemplo já estão na fila. Para recomeçar um deles, remova e carregue de novo.'); return; }
+    ocupado(true); progresso(0.02);
+    try {
+      // O cenário que está na tela é "a sua fábrica": ele entra pela aba Diagnóstico, não como exemplo.
+      const naTela = S.serialOtim ? assinaturaAtual() : null;
+      let novos = 0, pulouTela = false;
+      for (let i = 0; i < faltam.length; i++) {
+        const p = await montarPedidoExemplo(faltam[i], (f) => progresso(0.02 + 0.96 * (i + f) / faltam.length), (a) => {
+          if (S.fila.some((x) => x.assinatura === a)) return true; // a fábrica já mandou este mesmo caso
+          if (a === naTela) { pulouTela = true; return true; }
+          return false;
+        });
+        if (p) { S.fila.push(p); novos++; }
+      }
+      gravarFila(); renderFila(); renderPedido();
+      toast((novos ? (novos > 1 ? 'Pedidos de exemplo carregados na fila.' : 'Pedido de exemplo carregado na fila.') : 'Nenhum pedido novo para carregar.')
+        + (pulouTela ? ' O cenário que está na tela ficou de fora: para mandá-lo, use "Pedir avaliação" na aba Diagnóstico.' : ''));
+    } catch (e) {
+      console.error(e);
+      toast('Não consegui montar os pedidos de exemplo: ' + e.message, 'erro');
+    } finally { ocupado(false); progresso(null); }
+  }
+
+  async function importarPedido(j) {
+    const erro = RV.validarPedido(j);
+    if (erro) { toast(erro, 'erro'); return false; }
+    let p;
+    try { p = RV.prepararImportado(j); } catch (e) { console.error(e); toast('Não consegui ler este pedido: ' + e.message, 'erro'); return false; }
+    const i = S.fila.findIndex((x) => x.id === p.id);
+    if (i >= 0) {
+      if (!(await confirmar(`O pedido de ${p.empresa} já está na fila. Trocar pelo do arquivo? A revisão feita nele será perdida.`, 'Trocar'))) return false;
+      S.fila[i] = p;
+    } else S.fila.push(p);
+    gravarFila();
+    irPara('engenheiros');
+    renderFila(); renderRevisao(); renderPedido();
+    toast(`Pedido de ${p.empresa} adicionado à fila.`);
+    return true;
+  }
+  async function importarPedidoArquivo(arq) {
+    let j;
+    try { j = JSON.parse(await arq.text()); } catch (e) { toast('Esse arquivo não é um JSON válido.', 'erro'); return; }
+    await importarPedido(j);
+  }
+  async function removerPedido(id) {
+    const p = S.fila.find((x) => x.id === id);
+    if (!p) return;
+    const revisado = p.parecer || (p.rascunho && p.rascunho.decisoes && Object.keys(p.rascunho.decisoes).length);
+    if (!(await confirmar(`Remover o pedido de ${p.empresa} da fila?${revisado ? ' A revisão feita nele será perdida.' : ''}`, 'Remover'))) return;
+    S.fila = S.fila.filter((x) => x.id !== id);
+    if (S.casoId === id) S.casoId = null;
+    gravarFila(); salvarLocal();
+    renderFila(); renderRevisao(); renderPedido();
+  }
+
   // ================================================================== arquivos
-  function salvarArquivo() {
-    const dados = { formato: 'carga-certa', versao: 1, salvoEm: new Date().toISOString(), cenario: S.cen, planos: { base: S.serialBase, otim: S.serialOtim } };
+  function baixarJSON(dados, nome) {
     const blob = new Blob([JSON.stringify(dados, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `carga-certa-${slug(S.cen.nome)}.json`;
+    a.download = nome;
     document.body.appendChild(a); a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+  }
+  function salvarArquivo() {
+    baixarJSON({
+      formato: 'carga-certa', versao: 1, salvoEm: new Date().toISOString(), cenario: S.cen,
+      planos: { base: S.serialBase, otim: S.serialOtim }, diag: RV.serializarDiag(S.diag),
+    }, `carga-certa-${slug(S.cen.nome)}.json`);
     toast('Arquivo salvo na pasta de downloads.');
   }
   async function abrirArquivo(arq) {
     if (S.ocupado) return;
     let j;
     try { j = JSON.parse(await arq.text()); } catch (e) { toast('Esse arquivo não é um JSON válido.', 'erro'); return; }
-    const cen = j.cenario || j.cen || j;
+    if (j && j.formato === 'carga-certa-pedido') { await importarPedido(j); return; }
+    const cen = j && (j.cenario || j.cen || j);
     if (!cen || !Array.isArray(cen.maquinas) || !cen.tarifa) { toast('Esse arquivo não parece um cenário do Carga Certa.', 'erro'); return; }
     definirCenario(cen, j.planos || null);
-    if (S.serialOtim) { avaliarAtual(); salvarLocal(); } else await planejar({ zerar: true });
-    toast('Cenário aberto.');
+    if (S.serialOtim) { S.diag = RV.restaurarDiag(j.diag); avaliarAtual(); salvarLocal(); } else await planejar({ zerar: true });
+    const pa = parecerAtual();
+    if (pa) {
+      irPara('diagnostico');
+      const quem = (pa.p.engenheiro && pa.p.engenheiro.nome) || 'um engenheiro';
+      toast(pa.valido ? `Cenário aberto com o parecer de ${quem}. Veja abaixo, em "Avaliação por um engenheiro".` : 'Cenário aberto. Ele tem um parecer, mas os dados mudaram depois dele.');
+    } else toast('Cenário aberto.');
   }
   async function carregarExemplo(k) {
     const ex = CC.EXEMPLOS[k];
@@ -1013,7 +1487,7 @@
   }
 
   // ================================================================== ligações
-  const ABAS = ['visao', 'agenda', 'eventos', 'fabrica', 'energia', 'diagnostico', 'sobre'];
+  const ABAS = ['visao', 'agenda', 'eventos', 'fabrica', 'energia', 'diagnostico', 'engenheiros', 'sobre'];
   function irPara(aba) {
     if (!ABAS.includes(aba)) aba = 'visao';
     S.aba = aba;
@@ -1076,6 +1550,30 @@
     $('#btnEmailEng').onclick = emailEngenheiro;
     $('#btnCopiarResumo').onclick = copiarResumo;
 
+    // avaliação por engenheiro: lado da fábrica
+    $('#btnPedir').onclick = pedirAvaliacao;
+    $('#btnBaixarPedido').onclick = baixarPedido;
+    ['#pedCidade', '#pedContato', '#pedMensagem'].forEach((s) => $(s).addEventListener('change', salvarContato));
+    $('#estadoPedido').addEventListener('click', (e) => { const b = e.target.closest('[data-ir]'); if (b) irPara(b.dataset.ir); });
+    // lado do engenheiro
+    ['#engNome', '#engRegistro', '#engOrg'].forEach((s) => $(s).addEventListener('input', salvarPerfil));
+    $('#engEsp').addEventListener('change', () => { salvarPerfil(); renderFila(); });
+    $('#selOrdem').onchange = (e) => { S.ordemFila = e.target.value; gravarPreferenciasEng(); renderFila(); };
+    $('#chkCombina').onchange = (e) => { S.soCombina = e.target.checked; gravarPreferenciasEng(); renderFila(); };
+    $('#fila').addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      if (b.dataset.abrir) abrirCaso(b.dataset.abrir);
+      else if (b.dataset.remover) removerPedido(b.dataset.remover);
+    });
+    $('#btnImportarPedido').onclick = () => $('#arquivoPedido').click();
+    $('#arquivoPedido').onchange = (e) => { const f = e.target.files[0]; if (f) importarPedidoArquivo(f); e.target.value = ''; };
+    $('#btnExemplosFila').onclick = carregarPedidosExemplo;
+    const rev = $('#painelRevisao');
+    rev.addEventListener('click', cliqueRevisao);
+    rev.addEventListener('change', marcarConferido);
+    rev.addEventListener('input', digitarRevisao);
+
     const dica = $('#dica');
     const posicionar = (e) => {
       const w = dica.offsetWidth, h = dica.offsetHeight;
@@ -1094,12 +1592,25 @@
 
   function iniciar() {
     $('#selExemplo').innerHTML = '<option value="">Trocar de cenário…</option>' + Object.entries(CC.EXEMPLOS).map(([k, v]) => `<option value="${k}">${esc(v.titulo)}</option>`).join('');
+    $('#engEsp').insertAdjacentHTML('beforeend', Object.entries(RV.AREAS).map(([k, v]) => `<label><input type="checkbox" value="${k}"> ${esc(v)}</label>`).join(''));
+    // Lado do engenheiro: fila de pedidos e perfil ficam neste navegador.
+    S.fila = lerFila();
+    const pref = lerPreferenciasEng(), perfil = pref.perfil && typeof pref.perfil === 'object' ? pref.perfil : {};
+    S.perfil = {
+      nome: String(perfil.nome || ''), registro: String(perfil.registro || ''), organizacao: String(perfil.organizacao || ''),
+      especialidades: Array.isArray(perfil.especialidades) ? perfil.especialidades.filter((a) => RV.de(RV.AREAS, a)) : [],
+    };
+    S.ordemFila = ['reais', 'percentual', 'antigos'].includes(pref.ordemFila) ? pref.ordemFila : 'reais';
+    S.soCombina = !!pref.soCombina;
+    renderPerfil();
     ligar();
     const salvo = carregarLocal();
     if (salvo) {
       S.motor = ['local', 'gemini', 'claude'].includes(salvo.motor) ? salvo.motor : 'local';
       S.modeloGemini = salvo.modeloGemini || NV.MODELO_GEMINI;
       definirCenario(salvo.cen, salvo.base && salvo.otim ? { base: salvo.base, otim: salvo.otim } : null);
+      if (S.serialOtim) S.diag = RV.restaurarDiag(salvo.diag);
+      S.casoId = S.fila.some((p) => p.id === salvo.casoId) ? salvo.casoId : null;
     } else {
       definirCenario(CC.EXEMPLOS.metalurgica.cenario, null);
     }
@@ -1107,12 +1618,16 @@
     const abaInicial = location.hash.slice(1);
     if (ABAS.includes(abaInicial)) irPara(abaInicial);
     window.addEventListener('hashchange', () => { const a = location.hash.slice(1); if (ABAS.includes(a) && a !== S.aba) irPara(a); });
+    renderFila();
     if (!window.Chart) toast('A biblioteca de gráficos não carregou; os números continuam valendo.', 'erro');
     if (S.serialOtim) {
       try { avaliarAtual(); } catch (e) { console.error(e); planejar({ zerar: true }); }
     } else planejar({ zerar: true });
   }
 
-  CC.app = { estado: S, planejar, avaliarAtual, interpretar, aplicarEventos, rodarDiagnostico, gerarRelatorio, irPara };
+  CC.app = {
+    estado: S, planejar, avaliarAtual, interpretar, aplicarEventos, rodarDiagnostico, gerarRelatorio, irPara,
+    pedirAvaliacao, abrirCaso, emitirParecer, carregarPedidosExemplo, importarPedido, removerPedido, parecerAtual,
+  };
   iniciar();
 })();
