@@ -1,0 +1,1069 @@
+/* Carga Certa — interface: estado, telas, edição dos dados, eventos com IA, diagnóstico e relatório. */
+(function () {
+  'use strict';
+  const CC = window.CC;
+  const U = CC.util, TA = CC.tarifas, MO = CC.modelo, OT = CC.otim, DG = CC.diag, IA = CC.iaLocal, NV = CC.iaNuvem, EV = CC.eventos, GR = CC.graficos;
+  const $ = (s, el) => (el || document).querySelector(s);
+  const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
+  const esc = U.esc;
+  const LS = 'cargaCerta.v1';
+  const LS_CHAVE = (m) => 'cargaCerta.chave.' + m;
+  const lsGet = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  const lsSet = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) { /* navegação privada */ } };
+
+  const S = {
+    cen: null, inst: null, planoBase: null, planoOtim: null, avBase: null, avOtim: null,
+    serialBase: null, serialOtim: null, diagRapido: null, diag: null,
+    aba: 'visao', visao: 'otim', ganttPlano: 'otim', ganttDia: -1,
+    historico: [], pendentes: null, impacto: null,
+    ocupado: false, sujo: false, execucao: 0,
+    motor: 'local', chaves: {}, modeloGemini: NV.MODELO_GEMINI,
+  };
+
+  // ================================================================== utilidades da tela
+  let timerToast = null;
+  function toast(msg, tipo) {
+    const el = $('#toast');
+    el.textContent = msg; el.className = 'toast' + (tipo ? ' ' + tipo : ''); el.hidden = false;
+    clearTimeout(timerToast);
+    timerToast = setTimeout(() => { el.hidden = true; }, tipo === 'erro' ? 8000 : 3500);
+  }
+  function confirmar(msg, textoSim) {
+    return new Promise((res) => {
+      const box = $('#confirmacao');
+      $('#confirmacaoTexto').textContent = msg;
+      $('#confirmacaoSim').textContent = textoSim || 'Continuar';
+      box.hidden = false;
+      const fim = (v) => { box.hidden = true; $('#confirmacaoSim').onclick = null; $('#confirmacaoNao').onclick = null; res(v); };
+      $('#confirmacaoSim').onclick = () => fim(true);
+      $('#confirmacaoNao').onclick = () => fim(false);
+    });
+  }
+  function progresso(f) {
+    const bar = $('#barraProgresso');
+    if (f == null) { bar.hidden = true; return; }
+    bar.hidden = false;
+    bar.firstElementChild.style.width = Math.round(U.clamp(f, 0, 1) * 100) + '%';
+  }
+  function ocupado(v) {
+    S.ocupado = v;
+    for (const id of ['btnOtimizar', 'btnAplicar', 'btnDiag', 'btnRelatorio']) { const b = $('#' + id); if (b) b.disabled = v; }
+    $('#btnOtimizar').textContent = v ? 'Otimizando…' : 'Otimizar agenda';
+  }
+  const pegar = (obj, caminho) => caminho.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+  function por(obj, caminho, v) {
+    const ks = caminho.split('.');
+    let o = obj;
+    for (let i = 0; i < ks.length - 1; i++) { if (o[ks[i]] == null || typeof o[ks[i]] !== 'object') o[ks[i]] = {}; o = o[ks[i]]; }
+    o[ks[ks.length - 1]] = v;
+  }
+  const slug = (s) => U.normalizar(s).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'cenario';
+  function marcarSegmento(sel, botao) { $$(sel + ' button').forEach((b) => b.classList.toggle('ativo', b === botao)); }
+
+  // ================================================================== dados
+  function normalizarCenario(c) {
+    const cen = U.clonar(c);
+    const preset = TA.PRESETS['enel-sp-2026'];
+    cen.versao = 1;
+    cen.nome = cen.nome || 'Minha fábrica';
+    cen.dias = Math.max(1, Math.min(14, Math.round(+cen.dias || 7)));
+    cen.passoMin = [15, 30, 60].includes(+cen.passoMin) ? +cen.passoMin : 15;
+    cen.inicio = String(cen.inicio || U.fmtData(Math.floor(Date.now() / 60000))).slice(0, 10);
+    if (!Number.isFinite(U.parseDT(cen.agora))) cen.agora = `${cen.inicio}T06:00`;
+    cen.objetivo = Object.assign({ pesoPico: 5 }, cen.objetivo);
+    const ano = +cen.inicio.slice(0, 4);
+    cen.tarifa = Object.assign({
+      modalidade: 'B3_convencional', ponta: U.clonar(preset.ponta), intermediarioMin: 60,
+      demandaContratada: { unica: 0, ponta: 0, foraPonta: 0 }, toleranciaUltrapassagem: 0.05, fatorUltrapassagem: 2,
+      tributos: 0.225, bandeira: 0, fioB: U.clonar(preset.fioB), fioBPercentual: TA.fioBPercentualPadrao(ano), teReativo: preset.teReativo,
+    }, cen.tarifa);
+    cen.tarifa.precos = Object.assign(U.clonar(preset.precos), cen.tarifa.precos || {});
+    cen.tarifa.demandaContratada = Object.assign({ unica: 0, ponta: 0, foraPonta: 0 }, cen.tarifa.demandaContratada);
+    cen.solar = Object.assign({
+      ativo: false, kWp: 0, pr: 0.8, latitude: -23.55, longitude: -46.63, nebulosidade: [], limiteInjecaoKW: '',
+      voltWatt: { ativo: false, v1: 1.05, v2: 1.10 }, rede: { tensaoV: 380, resistenciaOhm: 0.05, tensaoBase: 1.0, elevacaoMeioDia: 0.02 }, custoKWp: 3600,
+    }, cen.solar);
+    cen.solar.voltWatt = Object.assign({ ativo: false, v1: 1.05, v2: 1.10 }, cen.solar.voltWatt);
+    cen.solar.rede = Object.assign({ tensaoV: 380, resistenciaOhm: 0.05, tensaoBase: 1.0, elevacaoMeioDia: 0.02 }, cen.solar.rede);
+    if (!Array.isArray(cen.solar.nebulosidade)) cen.solar.nebulosidade = [];
+    while (cen.solar.nebulosidade.length < cen.dias) cen.solar.nebulosidade.push(1);
+    for (const k of ['maquinas', 'pedidos', 'cargasFixas', 'cargasFlexiveis', 'indisponibilidades', 'limitesDemanda', 'excecoesTurno']) if (!Array.isArray(cen[k])) cen[k] = [];
+    return cen;
+  }
+
+  function salvarLocal() {
+    lsSet(LS, JSON.stringify({ cen: S.cen, base: S.serialBase, otim: S.serialOtim, motor: S.motor, modeloGemini: S.modeloGemini }));
+  }
+  function carregarLocal() {
+    const t = lsGet(LS);
+    if (!t) return null;
+    try { const j = JSON.parse(t); return j && j.cen && Array.isArray(j.cen.maquinas) ? j : null; } catch (e) { return null; }
+  }
+
+  function definirCenario(cen, planos) {
+    S.cen = normalizarCenario(cen);
+    S.serialBase = planos && planos.base ? planos.base : null;
+    S.serialOtim = planos && planos.otim ? planos.otim : null;
+    S.historico = []; S.impacto = null; S.pendentes = null; S.diag = null; S.sujo = false;
+    renderFormularios(); renderCartoes(); renderChips();
+  }
+
+  function marcarSujo() {
+    S.sujo = true;
+    S.diag = null;
+    $('#avisoSujo').hidden = false;
+    salvarLocal();
+  }
+
+  // ================================================================== planejamento
+  async function planejar(opc) {
+    opc = opc || {};
+    if (!S.cen) return false;
+    const exec = ++S.execucao;
+    ocupado(true); progresso(0.03);
+    await new Promise((r) => setTimeout(r, 0));
+    try {
+      const fresco = opc.zerar || !S.serialOtim;
+      // Sem plano anterior, a semana é planejada desde o começo (como se fosse segunda de manhã).
+      const cenPlano = fresco ? Object.assign({}, S.cen, { agora: `${S.cen.inicio}T00:00` }) : S.cen;
+      const inst = MO.construir(cenPlano);
+      const base = OT.planoASAP(inst, fresco ? null : OT.desserializar(inst, S.serialBase));
+      const inicial = fresco ? base : OT.desserializar(inst, S.serialOtim);
+      const otim = await OT.otimizar(inst, inicial, {
+        // Ao replanejar, mexer numa etapa já combinada "custa" R$ 20/mês: o plano só muda onde vale a pena.
+        referencia: fresco ? null : inicial, estabilidade: fresco ? 0 : 20,
+        aoProgresso: (f) => { if (exec === S.execucao) progresso(0.05 + 0.9 * f); },
+        cancelado: () => exec !== S.execucao,
+      });
+      if (exec !== S.execucao) return false;
+      S.serialBase = OT.serializar(inst, base);
+      S.serialOtim = OT.serializar(inst, otim);
+      S.sujo = false;
+      S.diag = null;
+      avaliarAtual();
+      salvarLocal();
+      return true;
+    } catch (e) {
+      console.error(e);
+      toast('Não consegui planejar: ' + e.message, 'erro');
+      return false;
+    } finally {
+      if (exec === S.execucao) { ocupado(false); progresso(null); }
+    }
+  }
+
+  function avaliarAtual() {
+    S.inst = MO.construir(S.cen);
+    const eb = new OT.Estado(S.inst, OT.desserializar(S.inst, S.serialBase));
+    const eo = new OT.Estado(S.inst, OT.desserializar(S.inst, S.serialOtim));
+    S.planoBase = eb.exportar();
+    S.planoOtim = eo.exportar();
+    S.avBase = OT.avaliar(S.inst, eb, true);
+    S.avOtim = OT.avaliar(S.inst, eo, true);
+    S.diagRapido = {
+      demanda: DG.demandaContratada(S.inst, S.avOtim),
+      reat: DG.reativos(S.inst, S.planoOtim, S.avOtim),
+    };
+    renderizar();
+  }
+
+  // ================================================================== renderização
+  function renderizar() {
+    if (!S.inst) return;
+    renderCabecalho(); renderKPIs(); renderFrase(); renderConta(); renderMudancas(); renderAvisos();
+    renderDias(); renderTabelaEtapas(); renderEventosLado(); renderRelogio();
+    renderRecomendacoes(); renderDiagTextos();
+    $('#avisoSujo').hidden = !S.sujo;
+    renderGraficosDaAba();
+  }
+  function renderGraficosDaAba() {
+    if (!S.inst) return;
+    if (S.aba === 'visao') renderCurva();
+    else if (S.aba === 'agenda') renderGantt();
+    else if (S.aba === 'diagnostico') renderDiagGraficos();
+  }
+
+  function renderCabecalho() {
+    $('#nomeCenario').textContent = S.cen.nome;
+    const t0 = U.parseDT(S.cen.inicio);
+    $('#descCenario').textContent = `${S.cen.descricao ? S.cen.descricao + ' ' : ''}Semana de ${U.fmtDia(t0)} a ${U.fmtDia(t0 + (S.cen.dias - 1) * 1440)} · tarifa ${TA.MODALIDADES[S.cen.tarifa.modalidade].nome}.`;
+    document.title = `Carga Certa · ${S.cen.nome}`;
+  }
+
+  function kpi(rot, val, antes, delta, classe) {
+    return `<div class="kpi"><div class="rot">${rot}</div><div class="val">${val}</div><div class="antes">${antes}</div>${delta ? `<div class="delta ${classe || ''}">${delta}</div>` : ''}</div>`;
+  }
+  function renderKPIs() {
+    const b = S.avBase, o = S.avOtim, inst = S.inst;
+    const eco = b.contaMes - o.contaMes;
+    const dPico = b.picos.all - o.picos.all, dPonta = b.kwh.ponta - o.kwh.ponta, dFC = o.fatorCarga - b.fatorCarga;
+    const h = [
+      kpi('Conta de energia por mês', U.brl(o.contaMes), `hoje ${U.brl(b.contaMes)}`,
+        eco > 0.5 ? `${U.brl(eco)} a menos (${U.pct(eco / b.contaMes, 1)})` : eco < -0.5 ? `${U.brl(-eco)} a mais` : 'sem diferença', eco > 0.5 ? 'bom' : eco < -0.5 ? 'ruim' : ''),
+      kpi('Pico puxado da rede', `${U.num(o.picos.all)} kW`, `hoje ${U.num(b.picos.all)} kW`,
+        Math.abs(dPico) >= 0.5 ? `${dPico > 0 ? '−' : '+'}${U.num(Math.abs(dPico))} kW` : '', dPico > 0 ? 'bom' : 'ruim'),
+      kpi('Energia no horário de ponta', `${U.num(o.kwh.ponta)} kWh`, `hoje ${U.num(b.kwh.ponta)} kWh por semana`,
+        Math.abs(dPonta) >= 1 ? `${dPonta > 0 ? '−' : '+'}${U.num(Math.abs(dPonta))} kWh` : '', dPonta > 0 ? 'bom' : 'ruim'),
+      kpi('Fator de carga', U.num(o.fatorCarga, 2), `hoje ${U.num(b.fatorCarga, 2)}`,
+        Math.abs(dFC) >= 0.005 ? `${dFC > 0 ? '+' : '−'}${U.num(Math.abs(dFC), 2)}` : '', dFC > 0 ? 'bom' : 'ruim'),
+      inst.kWp > 0
+        ? kpi('Energia solar aproveitada', U.pct(o.aproveitamentoSolar), `hoje ${U.pct(b.aproveitamentoSolar)}`, `${U.num(o.kwh.cortLim + o.kwh.cortVW)} kWh cortados na semana`, '')
+        : kpi('Energia solar', '—', 'sem geração própria', '', ''),
+      kpi('Entregas no prazo', o.pedidos.length ? `${o.noPrazo} de ${o.pedidos.length}` : '—', `hoje ${b.noPrazo} de ${b.pedidos.length}`,
+        o.pedidos.length ? (o.noPrazo === o.pedidos.length ? 'todas no prazo' : `${o.pedidos.length - o.noPrazo} atrasam`) : '', o.noPrazo === o.pedidos.length ? 'bom' : 'ruim'),
+    ];
+    $('#kpis').innerHTML = h.join('');
+  }
+
+  function fraseResumo() {
+    const b = S.avBase, o = S.avOtim;
+    const eco = b.contaMes - o.contaMes;
+    let f = eco > 1
+      ? `Com a agenda planejada, a conta estimada cai de <strong>${U.brl(b.contaMes)}</strong> para <strong>${U.brl(o.contaMes)}</strong> por mês (${U.pct(eco / b.contaMes, 1)} a menos).`
+      : `A conta estimada fica em <strong>${U.brl(o.contaMes)}</strong> por mês. Nesta tarifa, mudar os horários quase não muda a conta; veja o diagnóstico para outras modalidades.`;
+    const partes = [];
+    if (b.picos.all - o.picos.all >= 1) partes.push(`o pico puxado da rede vai de ${U.num(b.picos.all)} para ${U.num(o.picos.all)} kW`);
+    const sai = b.kwh.ponta - o.kwh.ponta;
+    if (sai >= 1) partes.push(`${U.num(sai)} kWh por semana saem do horário de ponta`);
+    const prazo = o.pedidos.length ? (o.noPrazo === o.pedidos.length ? `todas as ${o.pedidos.length} entregas ficam no prazo` : `${o.pedidos.length - o.noPrazo} pedido(s) atrasam (veja a aba Agenda)`) : '';
+    if (prazo) partes.push(prazo);
+    if (partes.length) {
+      const ultima = partes.pop();
+      const texto = partes.length ? `${partes.join(', ')} e ${ultima}` : ultima;
+      f += ' ' + texto.charAt(0).toUpperCase() + texto.slice(1) + '.';
+    }
+    return f;
+  }
+  function renderFrase() { $('#frase').innerHTML = fraseResumo(); }
+
+  function decomporConta(inst, av) {
+    const itens = TA.detalheDemanda(inst.dem, av.picos);
+    return {
+      energia: av.custoImportacaoMes, creditos: av.creditoUsadoMes, sobraKWh: av.creditoSobraKWh, itens,
+      demanda: itens.reduce((s, d) => s + d.valor, 0), ultrapassagem: itens.reduce((s, d) => s + d.valorUltrapassagem, 0), total: av.contaMes,
+    };
+  }
+  function renderConta() {
+    const inst = S.inst, b = decomporConta(inst, S.avBase), o = decomporConta(inst, S.avOtim);
+    const linha = (rot, vb, vo, cls) => `<tr${cls ? ` class="${cls}"` : ''}><td>${rot}</td><td class="num">${U.brl(vb)}</td><td class="num">${U.brl(vo)}</td><td class="num">${U.sinal(vo - vb, (v) => U.brl(v))}</td></tr>`;
+    let h = '<thead><tr><th></th><th class="num">Como é hoje</th><th class="num">Planejado</th><th class="num">Diferença</th></tr></thead><tbody>';
+    h += linha('Energia tirada da rede', b.energia, o.energia);
+    if (inst.kWp > 0) h += linha('Créditos da energia injetada', -b.creditos, -o.creditos);
+    b.itens.forEach((it, i) => {
+      const io = o.itens[i];
+      h += linha(`${it.nome} (faturada: ${U.num(it.faturada)} → ${U.num(io.faturada)} kW)`, it.valor, io.valor);
+      if (it.valorUltrapassagem > 0 || io.valorUltrapassagem > 0) h += linha('Multa de ultrapassagem', it.valorUltrapassagem, io.valorUltrapassagem);
+    });
+    h += linha('Total estimado', b.total, o.total, 'total');
+    $('#tabConta').innerHTML = h + '</tbody>';
+    const tar = S.cen.tarifa;
+    const sobra = o.sobraKWh > 1 ? ` A solar injeta mais do que a fábrica consome da rede: sobram cerca de ${U.num(o.sobraKWh)} kWh de créditos por mês, que só abatem contas futuras (Lei 14.300).` : '';
+    $('#notaConta').textContent = `Mês estimado = semana planejada × ${U.num(inst.fatorMes, 2)}. Tarifas da Enel SP (ANEEL REH nº 3.596/2026) com ${U.pct(+tar.tributos || 0, 1)} de tributos${+tar.bandeira ? ` e bandeira de ${U.brl(+tar.bandeira, true)}/kWh` : ', sem bandeira'}. Confira com a sua fatura.${sobra}`;
+  }
+
+  function renderMudancas() {
+    const lista = OT.mudancas(S.inst, S.planoBase, S.planoOtim).slice(0, 8);
+    $('#listaMudancas').innerHTML = lista.length
+      ? lista.map((m) => `<li><strong>${esc(m.rotulo)}</strong> <span class="quando">${U.fmtCurto(m.antes)} → ${U.fmtCurto(m.depois)}</span><span class="motivo">${esc(m.motivo)}</span></li>`).join('')
+      : '<li class="vazio">Nada mudou: a agenda de hoje já é a melhor para esta tarifa.</li>';
+  }
+
+  function renderAvisos() {
+    const a = [];
+    for (const x of S.inst.avisos) a.push(['', x]);
+    const o = S.avOtim;
+    for (const p of o.pedidos) {
+      if (!p.programado) a.push(['erro', `${p.id}: não coube na agenda desta semana (turnos, paradas ou prazo).`]);
+      else if (p.atrasoH > 0) a.push(['erro', `${p.id} atrasa ${U.fmtDuracao(p.atrasoH)} no plano. Vale considerar hora extra, outra máquina ou negociar o prazo.`]);
+    }
+    if (o.faltaFlex > 0.5) a.push(['', `Faltam ${U.num(o.faltaFlex, 1)} kWh para as cargas flexíveis dentro das janelas.`]);
+    if (o.excessoLim > 0.5) a.push(['erro', `O limite de demanda pedido é ultrapassado em até ${U.num(o.excessoLim, 1)} kW: cargas fixas e etapas já iniciadas não deixam baixar mais.`]);
+    $('#avisos').innerHTML = a.map(([c, t]) => `<div class="aviso ${c}">${esc(t)}</div>`).join('');
+  }
+
+  function renderCurva() {
+    const inst = S.inst, d = inst.dem, ref = [];
+    if (d.mod === 'A4_verde' && d.Dc > 0) ref.push({ valor: d.Dc, rotulo: `demanda contratada ${U.num(d.Dc)} kW`, cor: GR.CORES.contratada });
+    if (d.mod === 'A4_azul') {
+      if (d.DcFP > 0) ref.push({ valor: d.DcFP, rotulo: `contratada fora de ponta ${U.num(d.DcFP)} kW`, cor: GR.CORES.contratada });
+      if (d.DcP > 0) ref.push({ valor: d.DcP, rotulo: `contratada na ponta ${U.num(d.DcP)} kW`, cor: '#e04f2f' });
+    }
+    const av = S.visao === 'base' ? S.avBase : S.avOtim;
+    GR.curvaCarga($('#gCurva'), inst, av, { avBase: S.visao === 'comparar' ? S.avBase : null, contratadas: ref, agora: inst.agoraSlot });
+  }
+
+  // ---------------------------------------------------------------- agenda
+  function renderDias() {
+    const inst = S.inst;
+    if (S.ganttDia >= inst.dias) S.ganttDia = -1;
+    let h = `<button data-d="-1"${S.ganttDia < 0 ? ' class="ativo"' : ''}>Semana</button>`;
+    for (let d = 0; d < inst.dias; d++) h += `<button data-d="${d}"${S.ganttDia === d ? ' class="ativo"' : ''}>${U.fmtDia(inst.t0 + d * 1440)}</button>`;
+    $('#segDias').innerHTML = h;
+  }
+  function planoGantt() { return S.ganttPlano === 'base' ? S.planoBase : S.planoOtim; }
+  function renderGantt() { GR.gantt($('#gantt'), S.inst, planoGantt(), { dia: S.ganttDia }); }
+  function renderTabelaEtapas() {
+    const inst = S.inst, plano = planoGantt();
+    const fimPed = inst.pedidos.map((p) => Math.max(...p.ops.map((o) => (plano.ini[o] >= 0 ? plano.ini[o] + inst.ops[o].dur : -1))));
+    const linhas = inst.ops.map((op, o) => ({ op, o, s: plano.ini[o] })).filter((x) => x.s >= 0).sort((a, b) => a.s - b.s || a.o - b.o);
+    let h = '<thead><tr><th>Início</th><th>Fim</th><th>Máquina</th><th>Pedido</th><th>Cliente e produto</th><th class="num">kW</th><th class="num">Na ponta</th><th>Entrega</th></tr></thead><tbody>';
+    for (const { op, o, s } of linhas) {
+      const M = inst.maquinas[op.maq], ped = inst.pedidos[op.pedido];
+      let ponta = 0;
+      for (let t = s; t < s + op.dur; t++) if (inst.posto[t] === 2) ponta++;
+      const atrasa = fimPed[ped.idx] > ped.prazo;
+      const ini = inst.tempo(s), fim = inst.tempo(s + op.dur);
+      h += `<tr${atrasa ? ' class="atrasa"' : ''}><td>${U.fmtCurto(ini)}</td><td>${U.inicioDoDia(ini) === U.inicioDoDia(fim - 1) ? U.fmtHora(fim) : U.fmtCurto(fim)}</td>`
+        + `<td>${esc(M.nome)}${M.unidades > 1 ? ` ${plano.uni[o] + 1}` : ''}</td><td>${esc(ped.id)} · ${op.etapa + 1}/${ped.ops.length}</td>`
+        + `<td>${esc(ped.cliente)} · ${esc(ped.produto)}</td><td class="num">${U.num(op.kW, 1)}</td><td class="num">${ponta ? U.fmtDuracao(ponta * inst.dt) : '—'}</td>`
+        + `<td>${atrasa ? '<span class="tag ruim">atrasa</span>' : '<span class="tag ok">no prazo</span>'} ${U.fmtCurto(ped.prazoMin)}</td></tr>`;
+    }
+    if (!linhas.length) h += '<tr><td colspan="8" class="vazio">Nenhuma etapa na agenda.</td></tr>';
+    $('#tabEtapas').innerHTML = h + '</tbody>';
+  }
+
+  // ---------------------------------------------------------------- eventos
+  function renderRelogio() { $('#inpAgora').value = S.cen.agora; }
+  function exemplosGenericos() {
+    const m = S.cen.maquinas[0], p = S.cen.pedidos.find((x) => !x.cancelado);
+    const r = [];
+    if (m) r.push(`${m.nome} quebrou e só volta amanhã às 14h`);
+    if (p) r.push(`O cliente antecipou o ${p.id} para amanhã às 12h`);
+    r.push('Amanhã vai ser nublado', 'A distribuidora pediu para limitar a demanda em 50 kW amanhã das 17h às 20h');
+    return r;
+  }
+  function renderChips() {
+    const ex = S.cen && Array.isArray(S.cen.exemplosEventos) && S.cen.exemplosEventos.length ? S.cen.exemplosEventos : exemplosGenericos();
+    $('#chipsExemplos').innerHTML = ex.map((t) => `<button class="chip" data-chip="${esc(t)}">${esc(t)}</button>`).join('');
+  }
+
+  function renderMotor() {
+    $$('input[name="motor"]').forEach((r) => { r.checked = r.value === S.motor; });
+    const box = $('#boxChave');
+    box.hidden = S.motor === 'local';
+    if (S.motor === 'local') return;
+    $('#inpChave').value = S.chaves[S.motor] || lsGet(LS_CHAVE(S.motor)) || '';
+    $('#chkLembrar').checked = !!lsGet(LS_CHAVE(S.motor));
+    $('#rotModelo').hidden = S.motor !== 'gemini';
+    $('#inpModelo').value = S.modeloGemini;
+    $('#notaChave').innerHTML = S.motor === 'gemini'
+      ? 'Crie uma chave grátis em <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. A mensagem e a lista de máquinas e pedidos vão para o Google. A chave fica só neste navegador.'
+      : `Use uma chave do <a href="https://console.anthropic.com/" target="_blank" rel="noopener">console da Anthropic</a> (pago por uso, centavos por mensagem). Modelo ${esc(NV.MODELO_CLAUDE)}. A mensagem e a lista de máquinas e pedidos vão para a Anthropic. A chave fica só neste navegador.`;
+  }
+  function chaveAtual() { return (S.chaves[S.motor] || $('#inpChave').value.trim() || lsGet(LS_CHAVE(S.motor)) || '').trim(); }
+
+  async function interpretar() {
+    const texto = $('#txtEvento').value.trim();
+    if (!texto) { toast('Escreva o que aconteceu na fábrica.'); return; }
+    const btn = $('#btnInterpretar');
+    btn.disabled = true; btn.textContent = 'Interpretando…';
+    try {
+      let evs;
+      if (S.motor === 'local') evs = IA.interpretar(texto, S.cen);
+      else {
+        try {
+          const r = S.motor === 'gemini' ? await NV.gemini(texto, S.cen, chaveAtual(), S.modeloGemini) : await NV.claude(texto, S.cen, chaveAtual());
+          evs = r.eventos;
+          if (S.motor === 'gemini' && r.modelo && r.modelo !== S.modeloGemini) { S.modeloGemini = r.modelo; $('#inpModelo').value = r.modelo; salvarLocal(); }
+        } catch (e) {
+          console.warn(e);
+          toast(`${e.message} Usei a IA local no lugar.`, 'erro');
+          evs = IA.interpretar(texto, S.cen);
+        }
+      }
+      if (!evs.length) { toast('Não encontrei nenhum evento na mensagem.'); return; }
+      S.pendentes = evs.map((e) => Object.assign({ _usar: e.tipo !== 'desconhecido' }, e));
+      renderCartoes();
+    } finally {
+      btn.disabled = false; btn.textContent = 'Interpretar';
+    }
+  }
+
+  function pedidosAtivos() { return S.cen.pedidos.filter((p) => !p.cancelado); }
+  function diasHorizonte() { const t0 = U.parseDT(S.cen.inicio); return Array.from({ length: S.cen.dias }, (_, d) => U.fmtData(t0 + d * 1440)); }
+  function campoCartao(ev, c, rot, tipo) {
+    const v = ev[c], a = `data-k="${c}" data-t="${tipo}"`;
+    const opcoesPedidos = (sel) => pedidosAtivos().map((p) => `<option value="${esc(p.id)}"${p.id === sel ? ' selected' : ''}>${esc(p.id)} · ${esc(p.produto)}</option>`).join('');
+    switch (tipo) {
+      case 'maquina':
+        return `<label>${rot}<select ${a}><option value="">escolha…</option>${S.cen.maquinas.map((m) => `<option value="${esc(m.id)}"${m.id === v ? ' selected' : ''}>${esc(m.nome)}</option>`).join('')}</select></label>`;
+      case 'unidade': {
+        const m = S.cen.maquinas.find((x) => x.id === ev.maquina), n = m ? Math.max(1, +m.unidades || 1) : 1;
+        if (n === 1) return '';
+        return `<label>${rot}<select ${a}><option value="0"${!v ? ' selected' : ''}>todas</option>${Array.from({ length: n }, (_, k) => `<option value="${k + 1}"${+v === k + 1 ? ' selected' : ''}>${k + 1}</option>`).join('')}</select></label>`;
+      }
+      case 'pedido': return `<label>${rot}<select ${a}><option value="">escolha…</option>${opcoesPedidos(v)}</select></label>`;
+      case 'pedidos':
+        return `<div><span class="nota">${rot}</span><div class="lista-check">${pedidosAtivos().map((p) => `<label><input type="checkbox" ${a} value="${esc(p.id)}"${(v || []).includes(p.id) ? ' checked' : ''}> ${esc(p.id)}</label>`).join('')}</div></div>`;
+      case 'dias':
+        return `<div><span class="nota">${rot}</span><div class="lista-check">${diasHorizonte().map((d) => `<label><input type="checkbox" ${a} value="${d}"${(v || []).includes(d) ? ' checked' : ''}> ${U.fmtDia(U.parseDT(d))}</label>`).join('')}</div></div>`;
+      case 'datahora': return `<label>${rot}<input type="datetime-local" ${a} value="${esc(v || '')}"></label>`;
+      case 'hora': return `<label>${rot}<input type="time" ${a} value="${esc(v || '')}"></label>`;
+      case 'numero': return `<label>${rot}<input type="number" step="any" min="0" ${a} value="${v == null ? '' : v}"></label>`;
+      case 'pct': return `<label>${rot} (%)<input type="number" step="1" min="0" max="100" ${a} value="${v == null ? '' : Math.round(v * 100)}"></label>`;
+      case 'fator': return `<label>${rot}: ${Math.round((v || 0) * 100)}%<input type="range" min="0" max="100" step="5" ${a} value="${Math.round((v || 0) * 100)}"></label>`;
+      case 'bool': return `<label class="lista-check"><span><input type="checkbox" ${a}${v ? ' checked' : ''}> ${rot}</span></label>`;
+      default: return `<label>${rot}<input type="text" ${a} value="${esc(v || '')}"></label>`;
+    }
+  }
+  function cartaoHTML(ev, i) {
+    const probs = ev.tipo === 'desconhecido' ? [] : EV.problemas(ev, S.cen);
+    const conf = [ev.confianca != null ? `confiança ${U.pct(ev.confianca)}` : '', ev.origem || ''].filter(Boolean).join(' · ');
+    const tipos = EV.TIPOS.map((t) => `<option value="${t}"${t === ev.tipo ? ' selected' : ''}>${esc(EV.ROTULOS[t])}</option>`).join('');
+    const campos = (EV.CAMPOS[ev.tipo] || []).map(([c, rot, tipo]) => campoCartao(ev, c, rot, tipo)).join('');
+    const avisos = [...(ev.avisos || []), ...(ev.explicacao ? [ev.explicacao] : []), ...probs];
+    return `<div class="cartao${probs.length ? ' problema' : ''}${ev._usar === false ? ' desligado' : ''}" data-i="${i}">`
+      + `<div class="cartao-cab"><input type="checkbox" data-k="_usar"${ev._usar !== false ? ' checked' : ''} title="Aplicar este evento" aria-label="Aplicar este evento"><select data-k="tipo" aria-label="Tipo de evento">${tipos}</select><span class="conf">${esc(conf)}</span></div>`
+      + `<p class="cartao-desc">${esc(EV.descrever(ev, S.cen))}</p>`
+      + (campos ? `<div class="cartao-campos">${campos}</div>` : '')
+      + (avisos.length ? `<p class="cartao-aviso">${esc(avisos.join(' '))}</p>` : '')
+      + (ev.texto ? `<p class="cartao-texto">“${esc(ev.texto)}”</p>` : '')
+      + '</div>';
+  }
+  function renderCartoes() {
+    const cont = $('#cartoes');
+    if (!S.pendentes || !S.pendentes.length) { cont.innerHTML = ''; $('#acoesCartoes').hidden = true; return; }
+    cont.innerHTML = S.pendentes.map(cartaoHTML).join('');
+    $('#acoesCartoes').hidden = false;
+  }
+  function editarCartao(e) {
+    const card = e.target.closest('.cartao');
+    if (!card || !S.pendentes) return;
+    const i = +card.dataset.i, ev = S.pendentes[i], el = e.target, k = el.dataset.k, t = el.dataset.t;
+    if (!k) return;
+    if (k === '_usar') ev._usar = el.checked;
+    else if (k === 'tipo') {
+      const novo = IA.montarEvento(el.value, ev.texto || '', S.cen, U.parseDT(S.cen.agora), IA.dicionario(S.cen));
+      S.pendentes[i] = Object.assign(novo, { _usar: true, confianca: null, origem: 'tipo corrigido à mão' });
+    } else if (t === 'pedidos' || t === 'dias') ev[k] = $$(`input[data-k="${k}"]`, card).filter((x) => x.checked).map((x) => x.value);
+    else if (t === 'numero') ev[k] = el.value === '' ? null : U.numeroBR(el.value);
+    else if (t === 'pct') ev[k] = el.value === '' ? null : U.numeroBR(el.value) / 100;
+    else if (t === 'fator') ev[k] = +el.value / 100;
+    else if (t === 'unidade') ev[k] = +el.value || null;
+    else if (t === 'bool') ev[k] = el.checked;
+    else ev[k] = el.value || null;
+    if (k === 'maquina') ev.unidade = null;
+    card.outerHTML = cartaoHTML(S.pendentes[i], i);
+  }
+
+  function diffPlanos(a, b) {
+    const lista = [], inst = S.inst;
+    const nome = (id) => { const op = inst.ops.find((x) => x.id === id); return op ? `${id.split('#')[0]} · ${inst.maquinas[op.maq].nome}` : id.replace('#', ' · etapa '); };
+    for (const [id, vb] of Object.entries(b.ops)) {
+      const va = a && a.ops ? a.ops[id] : null;
+      if (!va) lista.push({ rot: nome(id), texto: `entrou na agenda: ${U.fmtCurto(vb[0])}` });
+      else if (va[0] !== vb[0]) lista.push({ rot: nome(id), texto: `${U.fmtCurto(va[0])} → ${U.fmtCurto(vb[0])}` });
+      else if (va[1] !== vb[1]) lista.push({ rot: nome(id), texto: `trocou para a unidade ${vb[1] + 1}` });
+    }
+    for (const id of Object.keys((a && a.ops) || {})) if (!b.ops[id]) lista.push({ rot: id.replace('#', ' · etapa '), texto: 'saiu da agenda' });
+    return lista;
+  }
+
+  async function aplicarEventos() {
+    if (!S.pendentes || S.ocupado) return;
+    const evs = S.pendentes.filter((e) => e._usar !== false && e.tipo !== 'desconhecido');
+    if (!evs.length) { toast('Nenhum evento marcado para aplicar.'); return; }
+    const probs = evs.flatMap((e) => EV.problemas(e, S.cen).map((p) => `${EV.ROTULOS[e.tipo]}: ${p}`));
+    if (probs.length) { toast(probs.join(' '), 'erro'); return; }
+    const antes = {
+      cen: U.clonar(S.cen), serialBase: S.serialBase, serialOtim: S.serialOtim,
+      conta: S.avOtim.contaMes, pico: S.avOtim.picos.all, noPrazo: S.avOtim.noPrazo, total: S.avOtim.pedidos.length,
+    };
+    const iniciadas = new Set();
+    S.inst.ops.forEach((op, o) => { const s = S.planoOtim.ini[o]; if (s >= 0 && s < S.inst.agoraSlot) iniciadas.add(op.id); });
+    const inst = S.inst, imp = S.avOtim.arr.imp;
+    const picoJanela = (a, b) => {
+      let m = 0;
+      const i0 = Math.max(0, Math.floor((a - inst.t0) / inst.passo)), i1 = Math.min(inst.T, Math.ceil((b - inst.t0) / inst.passo));
+      for (let t = i0; t < i1; t++) if (imp[t] > m) m = imp[t];
+      return m;
+    };
+    const { cen, notas } = EV.aplicar(S.cen, evs, { iniciadas, picoJanela });
+    S.cen = cen;
+    const ok = await planejar({});
+    if (!ok) {
+      S.cen = antes.cen; S.serialBase = antes.serialBase; S.serialOtim = antes.serialOtim;
+      avaliarAtual();
+      return;
+    }
+    S.historico.push({ agora: antes.cen.agora, texto: $('#txtEvento').value.trim(), descricoes: evs.map((e) => EV.descrever(e, antes.cen)), antes });
+    S.impacto = { antes, notas, mudancas: diffPlanos(antes.serialOtim, S.serialOtim) };
+    S.pendentes = null;
+    $('#txtEvento').value = '';
+    renderCartoes(); renderFormularios(); renderEventosLado(); renderChips();
+    toast('Plano refeito com os eventos.');
+  }
+
+  function renderEventosLado() {
+    const im = S.impacto, el = $('#impacto');
+    if (!im) el.innerHTML = '<p class="vazio">Nenhum evento aplicado ainda.</p>';
+    else {
+      const o = S.avOtim, dConta = o.contaMes - im.antes.conta;
+      const muds = im.mudancas.slice(0, 12).map((m) => `<li><strong>${esc(m.rot)}</strong>: ${esc(m.texto)}</li>`).join('');
+      el.innerHTML = `<dl class="impacto-linhas"><dt>Conta estimada</dt><dd>${U.brl(im.antes.conta)} → ${U.brl(o.contaMes)} (${Math.abs(dConta) < 1 ? 'sem mudança' : `${U.sinal(dConta, (v) => U.brl(v))} por mês`})</dd>`
+        + `<dt>Pico da rede</dt><dd>${U.num(im.antes.pico)} → ${U.num(o.picos.all)} kW</dd>`
+        + `<dt>Entregas no prazo</dt><dd>${im.antes.noPrazo} de ${im.antes.total} → ${o.noPrazo} de ${o.pedidos.length}</dd></dl>`
+        + (im.notas.length ? `<p class="nota">${esc(im.notas.join(' '))}</p>` : '')
+        + (muds ? `<h4>O que mudou na agenda (${im.mudancas.length})</h4><ul class="lista-mudancas">${muds}</ul>${im.mudancas.length > 12 ? `<p class="nota">e mais ${im.mudancas.length - 12}.</p>` : ''}` : '<p class="nota">A agenda não precisou mudar.</p>');
+    }
+    $('#historico').innerHTML = S.historico.length
+      ? S.historico.slice().reverse().map((h) => `<li>${esc(h.descricoes.join(' '))}<small>${U.fmtCurto(U.parseDT(h.agora))}${h.texto ? ` · “${esc(h.texto)}”` : ''}</small></li>`).join('')
+      : '<li class="vazio">Sem eventos.</li>';
+    $('#btnDesfazer').disabled = !S.historico.length;
+  }
+
+  function desfazer() {
+    const h = S.historico.pop();
+    if (!h) return;
+    S.cen = h.antes.cen; S.serialBase = h.antes.serialBase; S.serialOtim = h.antes.serialOtim;
+    S.impacto = null; S.diag = null; S.sujo = false;
+    avaliarAtual(); renderFormularios(); renderChips(); salvarLocal();
+    toast('Último evento desfeito.');
+  }
+
+  function mudarAgora(min) {
+    const t0 = U.parseDT(S.cen.inicio), fim = t0 + S.cen.dias * 1440;
+    S.cen.agora = U.fmtDT(U.clamp(Math.round(min / S.cen.passoMin) * S.cen.passoMin, t0, fim));
+    avaliarAtual();
+    salvarLocal();
+  }
+
+  // ================================================================== formulários (Fábrica e Energia)
+  function campoEditor(c, linha, i) {
+    const v = c.mostrar ? c.mostrar(linha) : linha[c.campo];
+    const a = `data-i="${i}" data-c="${c.campo}"`;
+    switch (c.tipo) {
+      case 'numero': return `<input type="number" step="${c.passo || 'any'}"${c.min != null ? ` min="${c.min}"` : ''} value="${v == null ? '' : v}" ${a}>`;
+      case 'datahora': return `<input type="datetime-local" value="${esc(v || '')}" ${a}>`;
+      case 'data': return `<input type="date" value="${esc(v || '')}" ${a}>`;
+      case 'hora': return `<input type="time" value="${esc(v || '')}" ${a}>`;
+      case 'check': return `<input type="checkbox"${v ? ' checked' : ''} ${a}>`;
+      case 'select': return `<select ${a}>${c.opcoes().map(([val, rot]) => `<option value="${esc(val)}"${String(val) === String(v) ? ' selected' : ''}>${esc(rot)}</option>`).join('')}</select>`;
+      default: return `<input type="text" value="${esc(v == null ? '' : v)}" ${a}${c.placeholder ? ` placeholder="${esc(c.placeholder)}"` : ''}>`;
+    }
+  }
+  function lerEditor(c, el, linha) {
+    if (c.ler) return c.ler(el, linha);
+    switch (c.tipo) {
+      case 'check': linha[c.campo] = el.checked; return true;
+      case 'numero': { const v = U.numeroBR(el.value); if (!Number.isFinite(v)) return false; linha[c.campo] = v; return true; }
+      case 'janela': { linha[c.campo] = el.value; return U.parseJanela(el.value).erros.length === 0; }
+      default: linha[c.campo] = el.value; return true;
+    }
+  }
+  function editor(cont, lista, colunas, novo) {
+    const desenhar = () => {
+      let h = '<div class="tabela-rolagem"><table class="tabela editor"><thead><tr>';
+      for (const c of colunas) h += `<th${c.largura ? ` style="min-width:${c.largura}"` : ''}>${esc(c.titulo)}</th>`;
+      h += '<th class="col-acao"></th></tr></thead><tbody>';
+      lista.forEach((linha, i) => {
+        h += '<tr>' + colunas.map((c) => `<td>${campoEditor(c, linha, i)}</td>`).join('') + `<td class="col-acao"><button class="remover" data-rem="${i}" title="Remover" aria-label="Remover">×</button></td></tr>`;
+      });
+      if (!lista.length) h += `<tr><td colspan="${colunas.length + 1}" class="vazio">Nenhum item.</td></tr>`;
+      h += '</tbody></table></div><div class="linha-botoes"><button class="btn mini" data-add>+ Adicionar</button></div>';
+      cont.innerHTML = h;
+    };
+    cont.onchange = (e) => {
+      const el = e.target, i = +el.dataset.i, c = colunas.find((x) => x.campo === el.dataset.c);
+      if (!c || !lista[i]) return;
+      const ok = lerEditor(c, el, lista[i]);
+      el.classList.toggle('invalido', ok === false);
+      if (ok === false) toast(c.erro || 'Valor não entendido nesta célula.', 'erro');
+      marcarSujo();
+    };
+    cont.onclick = (e) => {
+      const r = e.target.closest('[data-rem]');
+      if (r) { lista.splice(+r.dataset.rem, 1); desenhar(); marcarSujo(); return; }
+      if (e.target.closest('[data-add]')) { lista.push(novo()); desenhar(); marcarSujo(); }
+    };
+    desenhar();
+  }
+
+  const etapasTexto = (p) => (p.etapas || []).map((e) => `${e.maquina} ${String(e.horas).replace('.', ',')}`).join(' > ');
+  function lerEtapas(el, p) {
+    const partes = el.value.split(/>|;|→/).map((s) => s.trim()).filter(Boolean);
+    const etapas = [];
+    for (const s of partes) {
+      const m = /^(\S+)\s+([\d.,]+)\s*h?$/i.exec(s);
+      if (!m) return false;
+      const maq = S.cen.maquinas.find((x) => U.normalizar(x.id) === U.normalizar(m[1]));
+      const h = U.numeroBR(m[2]);
+      if (!maq || !(h > 0)) return false;
+      etapas.push({ maquina: maq.id, horas: h });
+    }
+    if (!etapas.length) return false;
+    p.etapas = etapas;
+    return true;
+  }
+
+  function campoForm(caminho, rotulo, tipo, opc) {
+    opc = opc || {};
+    const v = pegar(S.cen, caminho);
+    const id = 'f_' + caminho.replace(/\./g, '_');
+    const a = `id="${id}" data-caminho="${caminho}" data-tipo="${tipo}"`;
+    let input;
+    switch (tipo) {
+      case 'select': input = `<select ${a}>${opc.opcoes.map(([val, rot]) => `<option value="${esc(val)}"${String(val) === String(v) ? ' selected' : ''}>${esc(rot)}</option>`).join('')}</select>`; break;
+      case 'check': return `<label class="check"><input type="checkbox" ${a}${v ? ' checked' : ''}> ${esc(rotulo)}</label>`;
+      case 'pct': input = `<input type="number" step="0.1" ${a} value="${v == null || v === '' ? '' : Math.round(v * 1000) / 10}">`; break;
+      case 'numero': input = `<input type="number" step="${opc.passo || 'any'}" ${a} value="${v == null ? '' : v}"${opc.vazio ? ' placeholder="sem limite" data-vazio="1"' : ''}>`; break;
+      case 'data': input = `<input type="date" ${a} value="${esc(v || '')}">`; break;
+      case 'hora': input = `<input type="time" ${a} value="${esc(v || '')}">`; break;
+      default: input = `<input type="text" ${a} value="${esc(v == null ? '' : v)}">`;
+    }
+    return `<label for="${id}">${esc(rotulo)}${input}${opc.dica ? `<span class="dica-campo">${esc(opc.dica)}</span>` : ''}</label>`;
+  }
+  function ligarForm(cont, aoMudar) {
+    cont.onchange = (e) => {
+      const el = e.target, c = el.dataset.caminho;
+      if (!c) return;
+      let v;
+      switch (el.dataset.tipo) {
+        case 'check': v = el.checked; break;
+        case 'pct': v = U.numeroBR(el.value) / 100; if (!Number.isFinite(v)) { toast('Número inválido.', 'erro'); return; } break;
+        case 'numero':
+          if (el.value === '' && el.dataset.vazio) v = '';
+          else { v = U.numeroBR(el.value); if (!Number.isFinite(v)) { toast('Número inválido.', 'erro'); return; } }
+          break;
+        default: v = el.value;
+      }
+      por(S.cen, c, v);
+      if (aoMudar) aoMudar(c, v);
+      marcarSujo();
+    };
+  }
+
+  function renderNeb() {
+    const c = S.cen, t0 = U.parseDT(c.inicio);
+    while (c.solar.nebulosidade.length < c.dias) c.solar.nebulosidade.push(1);
+    $('#formNeb').innerHTML = c.solar.nebulosidade.slice(0, c.dias).map((v, i) => `<label><span>${U.fmtDia(t0 + i * 1440)}: <b>${Math.round(v * 100)}%</b></span><input type="range" min="0" max="100" step="5" value="${Math.round(v * 100)}" data-neb="${i}" aria-label="Céu em ${U.fmtDia(t0 + i * 1440)}"></label>`).join('');
+  }
+
+  function tabelaPrecos() {
+    const linhas = [
+      ['B3 Convencional', [['tarifa.precos.B3_convencional.energia', 'Energia (R$/kWh)']]],
+      ['B3 Branca', [['tarifa.precos.B3_branca.fp', 'Fora de ponta (R$/kWh)'], ['tarifa.precos.B3_branca.int', 'Intermediário (R$/kWh)'], ['tarifa.precos.B3_branca.p', 'Ponta (R$/kWh)']]],
+      ['A4 Verde', [['tarifa.precos.A4_verde.energiaFP', 'Energia fora de ponta (R$/kWh)'], ['tarifa.precos.A4_verde.energiaP', 'Energia na ponta (R$/kWh)'], ['tarifa.precos.A4_verde.demanda', 'Demanda (R$/kW)']]],
+      ['A4 Azul', [['tarifa.precos.A4_azul.energiaFP', 'Energia fora de ponta (R$/kWh)'], ['tarifa.precos.A4_azul.energiaP', 'Energia na ponta (R$/kWh)'], ['tarifa.precos.A4_azul.demandaFP', 'Demanda fora de ponta (R$/kW)'], ['tarifa.precos.A4_azul.demandaP', 'Demanda na ponta (R$/kW)']]],
+    ];
+    return `<h4>Preços sem tributos</h4><table class="tabela"><tbody>${linhas.map(([nome, campos]) => `<tr><td style="width:120px"><strong>${nome}</strong></td><td><div class="form">${campos.map(([c, r]) => campoForm(c, r, 'numero', { passo: 0.00001 })).join('')}</div></td></tr>`).join('')}</tbody></table>`
+      + '<p class="nota">Padrão: Enel SP, ANEEL REH nº 3.596/2026 (TUSD + TE). <button class="link" id="btnRestaurarTarifa">Restaurar os valores da Enel SP</button></p>';
+  }
+
+  function renderFormularios() {
+    const c = S.cen;
+    if (!c) return;
+    $('#formGeral').innerHTML = [
+      campoForm('nome', 'Nome da empresa', 'texto'),
+      campoForm('descricao', 'Descrição', 'texto'),
+      campoForm('inicio', 'Início da semana planejada', 'data'),
+      campoForm('dias', 'Dias no horizonte (1 a 14)', 'numero', { passo: 1 }),
+    ].join('');
+    ligarForm($('#formGeral'), (caminho) => {
+      if (caminho === 'inicio' || caminho === 'dias') {
+        S.cen = normalizarCenario(S.cen);
+        S.serialBase = S.serialOtim = null;
+        renderNeb();
+      }
+      if (caminho === 'nome' || caminho === 'descricao') renderCabecalho();
+    });
+
+    editor($('#edMaquinas'), c.maquinas, [
+      { campo: 'id', titulo: 'ID', largura: '100px' },
+      { campo: 'nome', titulo: 'Nome', largura: '170px' },
+      { campo: 'unidades', titulo: 'Unidades', tipo: 'numero', passo: 1, min: 1, largura: '80px' },
+      { campo: 'potenciaKW', titulo: 'Potência (kW)', tipo: 'numero', largura: '100px' },
+      { campo: 'fp', titulo: 'Fator de potência', tipo: 'numero', passo: 0.01, largura: '100px' },
+      { campo: 'janela', titulo: 'Horário de funcionamento', tipo: 'janela', largura: '260px', erro: 'Horário não entendido. Use, por exemplo, seg-sex 06:00-22:00; sab 06:00-14:00' },
+    ], () => ({ id: 'MAQ' + (c.maquinas.length + 1), nome: 'Nova máquina', unidades: 1, potenciaKW: 5, fp: 0.85, janela: 'seg-sex 06:00-22:00' }));
+
+    editor($('#edPedidos'), c.pedidos, [
+      { campo: 'id', titulo: 'ID', largura: '70px' },
+      { campo: 'cliente', titulo: 'Cliente', largura: '140px' },
+      { campo: 'produto', titulo: 'Produto', largura: '150px' },
+      { campo: 'quantidade', titulo: 'Qtd.', tipo: 'numero', largura: '70px' },
+      { campo: 'liberacao', titulo: 'Material disponível', tipo: 'datahora', largura: '180px' },
+      { campo: 'prazo', titulo: 'Prazo de entrega', tipo: 'datahora', largura: '180px' },
+      { campo: 'etapas', titulo: 'Etapas (máquina horas)', largura: '260px', mostrar: etapasTexto, ler: lerEtapas, erro: 'Etapas não entendidas. Use o ID da máquina e as horas: CORTE 2 > TORNO 6' },
+      { campo: 'cancelado', titulo: 'Cancelado', tipo: 'check', largura: '70px' },
+    ], () => ({
+      id: EV.proximoId(c), cliente: 'Cliente', produto: 'Produto', quantidade: 1, liberacao: c.agora,
+      prazo: U.fmtDT(U.inicioDoDia(U.parseDT(c.agora)) + 2 * 1440 + 17 * 60), etapas: c.maquinas[0] ? [{ maquina: c.maquinas[0].id, horas: 1 }] : [],
+    }));
+
+    editor($('#edFixas'), c.cargasFixas, [
+      { campo: 'nome', titulo: 'Carga', largura: '220px' },
+      { campo: 'kW', titulo: 'Potência (kW)', tipo: 'numero', largura: '100px' },
+      { campo: 'fp', titulo: 'Fator de potência', tipo: 'numero', passo: 0.01, largura: '100px' },
+      { campo: 'janela', titulo: 'Horário', tipo: 'janela', largura: '260px', erro: 'Horário não entendido.' },
+    ], () => ({ nome: 'Nova carga', kW: 1, fp: 0.92, janela: 'seg-sex 08:00-18:00' }));
+
+    editor($('#edFlex'), c.cargasFlexiveis, [
+      { campo: 'id', titulo: 'ID', largura: '80px' },
+      { campo: 'nome', titulo: 'Carga', largura: '200px' },
+      { campo: 'energiaKWh', titulo: 'Energia por dia (kWh)', tipo: 'numero', largura: '110px' },
+      { campo: 'potenciaMaxKW', titulo: 'Potência (kW)', tipo: 'numero', largura: '100px' },
+      { campo: 'janela', titulo: 'Janela', largura: '120px', placeholder: '16:00-06:00', ler: (el, l) => { l.janela = el.value; return U.parseJanela(`todos ${el.value}`).erros.length === 0; } },
+      { campo: 'dias', titulo: 'Dias', largura: '90px', placeholder: 'seg-sex', ler: (el, l) => { l.dias = el.value; return U.parseJanela(`${el.value || 'todos'} 00:00-01:00`).erros.length === 0; } },
+      { campo: 'continua', titulo: 'Contínua', tipo: 'check', largura: '70px' },
+    ], () => ({ id: 'FLEX' + (c.cargasFlexiveis.length + 1), nome: 'Nova carga flexível', energiaKWh: 10, potenciaMaxKW: 5, janela: '00:00-24:00', dias: 'todos', continua: false, fp: 0.95 }));
+
+    const opMaq = () => c.maquinas.map((m) => [m.id, m.nome]);
+    editor($('#edParadas'), c.indisponibilidades, [
+      { campo: 'maquina', titulo: 'Máquina', tipo: 'select', opcoes: opMaq, largura: '170px' },
+      { campo: 'unidade', titulo: 'Unidade (0 = todas)', tipo: 'numero', passo: 1, min: 0, largura: '90px' },
+      { campo: 'inicio', titulo: 'Início', tipo: 'datahora', largura: '180px' },
+      { campo: 'fim', titulo: 'Fim', tipo: 'datahora', largura: '180px' },
+      { campo: 'motivo', titulo: 'Motivo', largura: '200px' },
+    ], () => ({ maquina: c.maquinas[0] ? c.maquinas[0].id : '', unidade: 0, inicio: c.agora, fim: U.fmtDT(U.parseDT(c.agora) + 240), motivo: 'Manutenção' }));
+
+    editor($('#edLimites'), c.limitesDemanda, [
+      { campo: 'inicio', titulo: 'Início', tipo: 'datahora', largura: '180px' },
+      { campo: 'fim', titulo: 'Fim', tipo: 'datahora', largura: '180px' },
+      { campo: 'kW', titulo: 'Máximo (kW)', tipo: 'numero', largura: '90px' },
+      { campo: 'motivo', titulo: 'Motivo', largura: '160px' },
+    ], () => ({ inicio: c.agora, fim: U.fmtDT(U.parseDT(c.agora) + 180), kW: 50, motivo: 'Pedido da distribuidora' }));
+
+    editor($('#edTurnos'), c.excecoesTurno, [
+      { campo: 'data', titulo: 'Dia', tipo: 'data', largura: '150px' },
+      { campo: 'fechado', titulo: 'Sem expediente', tipo: 'check', largura: '90px' },
+      { campo: 'inicio', titulo: 'Abre', tipo: 'hora', largura: '100px' },
+      { campo: 'fim', titulo: 'Fecha', tipo: 'hora', largura: '100px' },
+    ], () => ({ data: c.inicio, fechado: false, inicio: '06:00', fim: '22:00' }));
+
+    $('#formTarifa').innerHTML = [
+      campoForm('tarifa.modalidade', 'Modalidade', 'select', { opcoes: Object.entries(TA.MODALIDADES).map(([k, v]) => [k, v.nome]) }),
+      campoForm('tarifa.ponta.inicio', 'Ponta começa', 'hora'),
+      campoForm('tarifa.ponta.fim', 'Ponta termina', 'hora'),
+      campoForm('tarifa.tributos', 'Tributos (ICMS + PIS/COFINS), %', 'pct', { dica: 'Percentual "por dentro". Use 0 para ver os valores da ANEEL sem tributos.' }),
+      campoForm('tarifa.bandeira', 'Bandeira (R$/kWh a mais)', 'numero', { passo: 0.001 }),
+      campoForm('tarifa.demandaContratada.unica', 'Demanda contratada, Verde (kW)', 'numero'),
+      campoForm('tarifa.demandaContratada.foraPonta', 'Demanda fora de ponta, Azul (kW)', 'numero'),
+      campoForm('tarifa.demandaContratada.ponta', 'Demanda na ponta, Azul (kW)', 'numero'),
+      campoForm('tarifa.fioBPercentual', 'Fio B não compensado na injeção, %', 'pct', { dica: 'Lei 14.300/2022: 60% em 2026, 75% em 2027.' }),
+    ].join('');
+    ligarForm($('#formTarifa'), (caminho) => { if (caminho === 'tarifa.modalidade') renderCabecalho(); });
+    $('#tabPrecos').innerHTML = tabelaPrecos();
+    ligarForm($('#tabPrecos'));
+
+    $('#formSolar').innerHTML = [
+      campoForm('solar.ativo', 'Tem geração solar própria', 'check'),
+      campoForm('solar.kWp', 'Potência dos módulos (kWp)', 'numero'),
+      campoForm('solar.pr', 'Desempenho global (PR)', 'numero', { passo: 0.01, dica: 'Perdas por temperatura, sujeira e inversor. Típico: 0,75 a 0,85.' }),
+      campoForm('solar.limiteInjecaoKW', 'Limite de injeção na rede (kW)', 'numero', { vazio: true, dica: 'Deixe vazio se a distribuidora não limitar a exportação.' }),
+      campoForm('solar.custoKWp', 'Custo instalado (R$/kWp)', 'numero'),
+      campoForm('solar.voltWatt.ativo', 'Inversor com controle volt-watt', 'check'),
+      campoForm('solar.voltWatt.v1', 'Volt-watt começa a reduzir em (pu)', 'numero', { passo: 0.005 }),
+      campoForm('solar.voltWatt.v2', 'Volt-watt zera a geração em (pu)', 'numero', { passo: 0.005 }),
+      campoForm('solar.rede.tensaoV', 'Tensão de fornecimento entre fases (V)', 'numero'),
+      campoForm('solar.rede.resistenciaOhm', 'Resistência equivalente da rede (Ω)', 'numero', { passo: 0.005, dica: 'Quanto maior, mais a tensão sobe quando a fábrica exporta.' }),
+      campoForm('solar.rede.tensaoBase', 'Tensão sem a fábrica, à noite (pu)', 'numero', { passo: 0.005 }),
+      campoForm('solar.rede.elevacaoMeioDia', 'Subida da tensão ao meio-dia pela solar dos vizinhos (pu)', 'numero', { passo: 0.005 }),
+    ].join('');
+    ligarForm($('#formSolar'));
+    renderNeb();
+
+    $('#formObjetivo').innerHTML = campoForm('objetivo.pesoPico', 'Peso extra para picos (R$ por kW de pico, por mês)', 'numero', {
+      dica: 'Além da conta, quanto vale reduzir 1 kW de pico (transformador, cabos, disjuntores). Use 0 para olhar só a conta.',
+    });
+    ligarForm($('#formObjetivo'));
+  }
+
+  // ================================================================== diagnóstico
+  function renderRecomendacoes() {
+    const rec = DG.recomendacoes({
+      avBase: S.avBase, avOtim: S.avOtim, modalidades: S.diag && S.diag.modalidades,
+      demanda: S.diagRapido.demanda, solar: S.diag && S.diag.solar, reat: S.diagRapido.reat,
+    });
+    if (!S.diag) rec.push('Para completar o diagnóstico (modalidade tarifária e tamanho da usina solar), clique em "Comparar tarifas e dimensionar a solar". Leva alguns segundos.');
+    $('#listaRecom').innerHTML = rec.map((r) => `<li>${esc(r)}</li>`).join('');
+  }
+
+  function renderDiagTextos() {
+    const d = S.diagRapido.demanda, b = S.avBase, o = S.avOtim, r = S.diagRapido.reat;
+    $('#txtDemanda').innerHTML = !d.aplica
+      ? `<p>No grupo B não existe cobrança de demanda. Mesmo assim, o pico planejado cai de <strong>${U.num(b.picos.all)} kW</strong> para <strong>${U.num(o.picos.all)} kW</strong>, o que alivia transformador, cabos e disjuntores e evita reforços na instalação.</p>`
+      : d.parcelas.map((p) => `<div class="numeros"><div><span>${esc(p.nome)}: pico planejado</span><strong>${U.num(p.medida)} kW</strong></div><div><span>Contratada hoje</span><strong>${U.num(p.contratada)} kW</strong></div><div><span>Sugerida</span><strong>${p.recomendada} kW</strong></div><div><span>Custo por mês</span><strong>${U.brl(p.custoAtual)} → ${U.brl(p.custoRecomendado)}</strong></div></div>${p.ultrapassagem ? '<p class="cartao-aviso">A medição passa de 105% da contratada: há multa de ultrapassagem.</p>' : ''}`).join('')
+        + '<p class="nota">Demanda faturada = maior valor entre a medida e a contratada. Acima de 105% da contratada, o excedente paga o dobro (REN 1.000/2021). A sugestão deixa 5% de folga e respeita o mínimo de 30 kW.</p>';
+    $('#txtFC').innerHTML = `<div class="numeros">
+        <div><span>Fator de carga hoje</span><strong>${U.num(b.fatorCarga, 2)}</strong></div>
+        <div><span>Fator de carga planejado</span><strong>${U.num(o.fatorCarga, 2)}</strong></div>
+        <div><span>Custo médio do kWh hoje</span><strong>${U.brl(b.custoMedioKWh, true)}</strong></div>
+        <div><span>Custo médio planejado</span><strong>${U.brl(o.custoMedioKWh, true)}</strong></div>
+      </div>
+      <p>Fator de carga = energia tirada da rede ÷ (pico × horas). Quanto mais perto de 1, melhor a fábrica usa a capacidade pela qual paga.</p>
+      <div class="numeros">
+        <div><span>Fator de potência médio${S.inst.kWp > 0 ? ' (com solar)' : ''}</span><strong>${U.num(r.fpMedio, 2)}</strong></div>
+        ${S.inst.kWp > 0 ? `<div><span>Sem a solar seria</span><strong>${U.num(r.fpSemSolar, 2)}</strong></div>` : ''}
+        <div><span>Reativo excedente por mês</span><strong>${r.grupoA ? U.brl(r.custoMes) : 'não cobrado no grupo B'}</strong></div>
+        <div><span>Banco de capacitores automático</span><strong>${r.banco ? `${r.banco} kvar` : 'não precisa'}</strong></div>
+      </div>
+      <p>${S.inst.kWp > 0 ? 'Com a solar, a fábrica puxa menos kW da rede, mas continua puxando os mesmos kvar dos motores, então o fator de potência medido cai. ' : ''}${r.grupoA ? `No grupo A, abaixo de 0,92 há cobrança de reativo excedente; com o banco sugerido o custo estimado cai para ${U.brl(r.custoMesComBanco)} por mês.` : 'No grupo B não há cobrança de reativo, mas corrigir o fator de potência reduz perdas e aquecimento dos cabos.'}</p>`;
+
+    if (!S.diag) {
+      $('#tabModal').innerHTML = ''; $('#tabSolar').innerHTML = '';
+      $('#notaModal').textContent = 'Clique em "Comparar tarifas e dimensionar a solar" para calcular.';
+      $('#notaSolar').textContent = 'Clique em "Comparar tarifas e dimensionar a solar" para calcular.';
+      return;
+    }
+    const m = S.diag.modalidades;
+    $('#tabModal').innerHTML = '<thead><tr><th>Modalidade</th><th class="num">Agenda de hoje</th><th class="num">Agenda planejada</th><th class="num">Replanejada para a tarifa</th></tr></thead><tbody>'
+      + m.linhas.map((l) => `<tr class="${l === m.melhor ? 'destaque' : ''}"><td>${esc(l.nome)}${l.atual ? ' <span class="tag">atual</span>' : ''}${l === m.melhor ? ' <span class="tag ok">melhor</span>' : ''}${l.mesmoGrupo ? '' : ' <span class="tag">outro grupo</span>'}</td><td class="num">${U.brl(l.contaHoje)}</td><td class="num">${U.brl(l.contaAgendaAtual)}</td><td class="num">${U.brl(l.contaReplanejada)}</td></tr>`).join('')
+      + '</tbody>';
+    $('#notaModal').textContent = 'Valores por mês, com tributos. A coluna da direita refaz a agenda para cada tarifa. Mudar de grupo (A para B ou o contrário) depende do tipo de ligação e das regras da REN 1.000/2021.';
+    const s = S.diag.solar;
+    $('#tabSolar').innerHTML = '<thead><tr><th>Usina</th><th class="num">Economia por mês</th><th class="num">Cortado (kWh/mês)</th><th class="num">Autoconsumo</th><th class="num">Retorno simples</th><th class="num">VPL 25 anos</th></tr></thead><tbody>'
+      + s.linhas.map((l) => `<tr class="${l === s.recomendado ? 'destaque' : ''}"><td>${l.kWp} kWp${l.kWp === s.atual ? ' <span class="tag">atual</span>' : ''}${l === s.recomendado ? ' <span class="tag ok">sugerida</span>' : ''}</td><td class="num">${U.brl(l.economiaMes)}</td><td class="num">${U.num(l.cortLimMes + l.cortVWMes)}</td><td class="num">${l.kWp ? U.pct(l.autoconsumo) : '—'}</td><td class="num">${l.kWp && Number.isFinite(l.payback) ? U.num(l.payback, 1) + ' anos' : '—'}</td><td class="num">${l.kWp ? U.brl(l.vpl) : '—'}</td></tr>`).join('')
+      + '</tbody>';
+    $('#notaSolar').textContent = `A agenda é replanejada para cada tamanho. Premissas: ${U.brl(s.premissas.custoKWp)} por kWp instalado, 25 anos, taxa de 10% ao ano, perda de 0,5% ao ano e manutenção de 1% do investimento por ano. Teto: inversores até ${U.num(s.limiteKW)} kW (${s.grupoA ? 'demanda contratada' : 'limite da microgeração'}), com módulos até 20% acima disso.`;
+  }
+
+  function renderDiagGraficos() {
+    const d = S.diagRapido.demanda;
+    $('#gDemanda').parentElement.hidden = !d.aplica;
+    $('#gModal').parentElement.hidden = !S.diag;
+    $('#gSolar').parentElement.hidden = !S.diag;
+    if (d.aplica) GR.curvaDemanda($('#gDemanda'), d.parcelas[d.parcelas.length - 1]); else GR.destruir($('#gDemanda'));
+    if (S.diag) { GR.barrasModalidades($('#gModal'), S.diag.modalidades.linhas); GR.curvaSolar($('#gSolar'), S.diag.solar); }
+    else { GR.destruir($('#gModal')); GR.destruir($('#gSolar')); }
+  }
+
+  async function rodarDiagnostico() {
+    if (S.ocupado || !S.serialOtim) return false;
+    ocupado(true); progresso(0.02);
+    try {
+      const modalidades = await DG.compararModalidades(S.cen, S.serialBase, S.serialOtim, { replanejar: true, aoProgresso: (f) => progresso(0.02 + 0.45 * f) });
+      const solar = await DG.dimensionarSolar(S.cen, S.serialOtim, { aoProgresso: (f) => progresso(0.5 + 0.48 * f) });
+      S.diag = { modalidades, solar };
+      renderRecomendacoes(); renderDiagTextos();
+      if (S.aba === 'diagnostico') renderDiagGraficos();
+      return true;
+    } catch (e) {
+      console.error(e);
+      toast('O diagnóstico falhou: ' + e.message, 'erro');
+      return false;
+    } finally { ocupado(false); progresso(null); }
+  }
+
+  // ================================================================== relatório
+  async function gerarRelatorio() {
+    if (S.ocupado) return;
+    if (!S.diag) { toast('Calculando o diagnóstico completo para o relatório…'); await rodarDiagnostico(); }
+    const inst = S.inst, b = S.avBase, o = S.avOtim, cen = S.cen;
+    let img = '';
+    if (window.Chart) {
+      const c = document.createElement('canvas');
+      c.width = 1100; c.height = 340;
+      c.style.cssText = 'position:fixed;left:-10000px;top:0;width:1100px;height:340px';
+      document.body.appendChild(c);
+      try {
+        const g = GR.curvaCarga(c, inst, o, { avBase: b, estatico: true, agora: 0, contratadas: inst.dem.mod === 'A4_verde' && inst.dem.Dc ? [{ valor: inst.dem.Dc, rotulo: `demanda contratada ${U.num(inst.dem.Dc)} kW`, cor: GR.CORES.contratada }] : [] });
+        if (g) { img = g.toBase64Image('image/png', 1); g.destroy(); }
+      } finally { c.remove(); }
+    }
+    const t0 = U.parseDT(cen.inicio);
+    const rec = DG.recomendacoes({ avBase: b, avOtim: o, modalidades: S.diag && S.diag.modalidades, demanda: S.diagRapido.demanda, solar: S.diag && S.diag.solar, reat: S.diagRapido.reat });
+    const ka = [
+      ['Conta estimada por mês', U.brl(b.contaMes), U.brl(o.contaMes)],
+      ['Pico puxado da rede', `${U.num(b.picos.all)} kW`, `${U.num(o.picos.all)} kW`],
+      ['Energia no horário de ponta (semana)', `${U.num(b.kwh.ponta)} kWh`, `${U.num(o.kwh.ponta)} kWh`],
+      ['Fator de carga', U.num(b.fatorCarga, 2), U.num(o.fatorCarga, 2)],
+      ['Custo médio do kWh', U.brl(b.custoMedioKWh, true), U.brl(o.custoMedioKWh, true)],
+      ['Energia solar aproveitada', inst.kWp ? U.pct(b.aproveitamentoSolar) : '—', inst.kWp ? U.pct(o.aproveitamentoSolar) : '—'],
+      ['Entregas no prazo', `${b.noPrazo} de ${b.pedidos.length}`, `${o.noPrazo} de ${o.pedidos.length}`],
+    ];
+    const muds = OT.mudancas(inst, S.planoBase, S.planoOtim).slice(0, 12);
+    let h = `<h1>Diagnóstico energético e plano de produção</h1>
+      <p class="sutil">${esc(cen.nome)} · semana de ${U.fmtDia(t0)} a ${U.fmtDia(t0 + (cen.dias - 1) * 1440)} · tarifa ${esc(TA.MODALIDADES[cen.tarifa.modalidade].nome)} · gerado em ${new Date().toLocaleDateString('pt-BR')} pelo Carga Certa (equipe T³ch)</p>
+      <section><h2>1. Resumo</h2><p>${fraseResumo()}</p>
+      <table><thead><tr><th>Indicador</th><th class="num">Como é hoje</th><th class="num">Planejado</th></tr></thead><tbody>${ka.map((k) => `<tr><td>${k[0]}</td><td class="num">${k[1]}</td><td class="num">${k[2]}</td></tr>`).join('')}</tbody></table></section>`;
+    if (img) h += `<section><h2>2. Curva de carga planejada</h2><img src="${img}" alt="Curva de carga"><p class="sutil">Áreas: cargas fixas, máquinas e cargas flexíveis. Linha escura: potência puxada da rede no plano; tracejada: como é hoje. Faixas: horário de ponta.</p></section>`;
+    h += `<section><h2>3. Recomendações</h2><ol>${rec.map((r) => `<li>${esc(r)}</li>`).join('')}</ol></section>`;
+    h += `<section><h2>4. Principais mudanças na agenda</h2>${muds.length ? `<table><thead><tr><th>Etapa</th><th>Hoje</th><th>Planejado</th><th>Motivo</th></tr></thead><tbody>${muds.map((m) => `<tr><td>${esc(m.rotulo)}</td><td>${U.fmtCurto(m.antes)}</td><td>${U.fmtCurto(m.depois)}</td><td>${esc(m.motivo)}</td></tr>`).join('')}</tbody></table>` : '<p>Sem mudanças.</p>'}</section>`;
+    if (S.diag) {
+      const m = S.diag.modalidades, s = S.diag.solar;
+      h += `<section><h2>5. Modalidade tarifária (R$ por mês)</h2><table><thead><tr><th>Modalidade</th><th class="num">Agenda de hoje</th><th class="num">Replanejada</th></tr></thead><tbody>${m.linhas.map((l) => `<tr><td>${esc(l.nome)}${l.atual ? ' (atual)' : ''}${l.mesmoGrupo ? '' : ' (outro grupo)'}</td><td class="num">${U.brl(l.contaHoje)}</td><td class="num">${U.brl(l.contaReplanejada)}</td></tr>`).join('')}</tbody></table></section>`;
+      h += `<section><h2>6. Geração solar</h2><table><thead><tr><th>Usina</th><th class="num">Economia/mês</th><th class="num">Cortado kWh/mês</th><th class="num">Retorno</th><th class="num">VPL 25 anos</th></tr></thead><tbody>${s.linhas.map((l) => `<tr><td>${l.kWp} kWp${l === s.recomendado ? ' (sugerida)' : ''}${l.kWp === s.atual ? ' (atual)' : ''}</td><td class="num">${U.brl(l.economiaMes)}</td><td class="num">${U.num(l.cortLimMes + l.cortVWMes)}</td><td class="num">${l.kWp && Number.isFinite(l.payback) ? U.num(l.payback, 1) + ' anos' : '—'}</td><td class="num">${l.kWp ? U.brl(l.vpl) : '—'}</td></tr>`).join('')}</tbody></table></section>`;
+    }
+    h += `<section><h2>Premissas</h2><p class="sutil">Tarifas de aplicação da Enel SP homologadas pela ANEEL (REH nº 3.596/2026), com ${U.pct(+cen.tarifa.tributos || 0, 1)} de tributos. Mês estimado a partir da semana planejada (× ${U.num(inst.fatorMes, 2)}). Energia injetada valorada pela Lei 14.300/2022 (${U.pct(+cen.tarifa.fioBPercentual || 0)} do Fio B não compensado). Geração solar por modelo de céu claro ajustado pelo céu previsto de cada dia. Os valores são estimativas e devem ser conferidos com medições e faturas reais.</p></section>
+      <div class="assinatura"><div>Engenheiro(a) responsável · CREA</div><div>Data e assinatura</div></div>`;
+    $('#relatorio').innerHTML = h;
+    setTimeout(() => window.print(), 50);
+  }
+
+  // ================================================================== ponte com o engenheiro
+  function resumoParaEngenheiro() {
+    const b = S.avBase, o = S.avOtim, cen = S.cen, t0 = U.parseDT(cen.inicio);
+    const rec = DG.recomendacoes({
+      avBase: b, avOtim: o, modalidades: S.diag && S.diag.modalidades,
+      demanda: S.diagRapido.demanda, solar: S.diag && S.diag.solar, reat: S.diagRapido.reat,
+    });
+    return [
+      `Empresa: ${cen.nome}`,
+      `Tarifa: ${TA.MODALIDADES[cen.tarifa.modalidade].nome} (Enel SP, ANEEL REH nº 3.596/2026)`,
+      `Semana analisada: ${U.fmtDia(t0)} a ${U.fmtDia(t0 + (cen.dias - 1) * 1440)}`,
+      '',
+      `Conta estimada: ${U.brl(b.contaMes)} hoje, ${U.brl(o.contaMes)} com a agenda planejada (por mês)`,
+      `Pico puxado da rede: ${U.num(b.picos.all)} kW hoje, ${U.num(o.picos.all)} kW planejado`,
+      `Fator de carga: ${U.num(b.fatorCarga, 2)} hoje, ${U.num(o.fatorCarga, 2)} planejado`,
+      `Entregas no prazo: ${o.noPrazo} de ${o.pedidos.length}`,
+      '',
+      'Recomendações para validar:',
+      ...rec.map((r, i) => `${i + 1}. ${r}`),
+      '',
+      'O relatório completo segue em PDF (gerado pelo Carga Certa).',
+    ].join('\n');
+  }
+  function emailEngenheiro() {
+    const para = $('#inpEngenheiro').value.trim();
+    const assunto = `Pedido de validação: diagnóstico energético de ${S.cen.nome}`;
+    let corpo = `Olá,\n\nVocê poderia conferir o diagnóstico energético abaixo? Anexei o relatório em PDF.\n\n${resumoParaEngenheiro()}\n\nObrigado!`;
+    if (corpo.length > 1800) corpo = corpo.slice(0, 1790) + '…';
+    const dest = encodeURIComponent(para).replace(/%40/g, '@');
+    window.location.href = `mailto:${dest}?subject=${encodeURIComponent(assunto)}&body=${encodeURIComponent(corpo)}`;
+  }
+  async function copiarResumo() {
+    const texto = resumoParaEngenheiro();
+    try { await navigator.clipboard.writeText(texto); toast('Resumo copiado. Cole no e-mail ou no WhatsApp.'); return; } catch (e) { /* segue para o plano B */ }
+    const ta = document.createElement('textarea');
+    ta.value = texto; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+    document.body.appendChild(ta); ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    ta.remove();
+    toast(ok ? 'Resumo copiado. Cole no e-mail ou no WhatsApp.' : 'Não consegui copiar automaticamente neste navegador.', ok ? '' : 'erro');
+  }
+
+  // ================================================================== arquivos
+  function salvarArquivo() {
+    const dados = { formato: 'carga-certa', versao: 1, salvoEm: new Date().toISOString(), cenario: S.cen, planos: { base: S.serialBase, otim: S.serialOtim } };
+    const blob = new Blob([JSON.stringify(dados, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `carga-certa-${slug(S.cen.nome)}.json`;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+    toast('Arquivo salvo na pasta de downloads.');
+  }
+  async function abrirArquivo(arq) {
+    let j;
+    try { j = JSON.parse(await arq.text()); } catch (e) { toast('Esse arquivo não é um JSON válido.', 'erro'); return; }
+    const cen = j.cenario || j.cen || j;
+    if (!cen || !Array.isArray(cen.maquinas) || !cen.tarifa) { toast('Esse arquivo não parece um cenário do Carga Certa.', 'erro'); return; }
+    definirCenario(cen, j.planos || null);
+    if (S.serialOtim) { avaliarAtual(); salvarLocal(); } else await planejar({ zerar: true });
+    toast('Cenário aberto.');
+  }
+  async function carregarExemplo(k) {
+    const ex = CC.EXEMPLOS[k];
+    if (!ex) return;
+    if ((S.historico.length || S.sujo) && !(await confirmar('Carregar o exemplo substitui os dados atuais. Para guardar o que fez, use "Salvar" antes.', 'Carregar exemplo'))) { $('#selExemplo').value = ''; return; }
+    definirCenario(ex.cenario, null);
+    $('#selExemplo').value = '';
+    await planejar({ zerar: true });
+  }
+
+  // ================================================================== ligações
+  const ABAS = ['visao', 'agenda', 'eventos', 'fabrica', 'energia', 'diagnostico', 'sobre'];
+  function irPara(aba) {
+    if (!ABAS.includes(aba)) aba = 'visao';
+    S.aba = aba;
+    $$('.abas button').forEach((b) => b.classList.toggle('ativa', b.dataset.aba === aba));
+    $$('.aba').forEach((s) => s.classList.toggle('ativa', s.id === 'aba-' + aba));
+    try { history.replaceState(null, '', aba === 'visao' ? location.pathname + location.search : '#' + aba); } catch (e) { /* file:// em alguns navegadores */ }
+    renderGraficosDaAba();
+  }
+
+  function ligar() {
+    $$('.abas button').forEach((b) => { b.onclick = () => irPara(b.dataset.aba); });
+    $('#btnOtimizar').onclick = () => planejar({});
+    $('#btnOtimizar2').onclick = () => planejar({});
+    $('#selExemplo').onchange = (e) => { if (e.target.value) carregarExemplo(e.target.value); };
+    $('#btnAbrir').onclick = () => $('#arquivo').click();
+    $('#arquivo').onchange = (e) => { const f = e.target.files[0]; if (f) abrirArquivo(f); e.target.value = ''; };
+    $('#btnSalvar').onclick = salvarArquivo;
+    $('#btnRelatorio').onclick = gerarRelatorio;
+
+    $('#segVisao').onclick = (e) => { const b = e.target.closest('button[data-v]'); if (!b) return; S.visao = b.dataset.v; marcarSegmento('#segVisao', b); renderCurva(); };
+    $('#segGanttPlano').onclick = (e) => { const b = e.target.closest('button[data-p]'); if (!b) return; S.ganttPlano = b.dataset.p; marcarSegmento('#segGanttPlano', b); renderGantt(); renderTabelaEtapas(); };
+    $('#segDias').onclick = (e) => { const b = e.target.closest('button[data-d]'); if (!b) return; S.ganttDia = +b.dataset.d; marcarSegmento('#segDias', b); renderGantt(); };
+
+    $('#btnInterpretar').onclick = interpretar;
+    $('#txtEvento').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) interpretar(); });
+    $('#chipsExemplos').onclick = (e) => {
+      const b = e.target.closest('[data-chip]');
+      if (!b) return;
+      const ta = $('#txtEvento');
+      ta.value = ta.value.trim() ? `${ta.value.trim()}\n${b.dataset.chip}` : b.dataset.chip;
+      ta.focus();
+    };
+    $('#cartoes').addEventListener('change', editarCartao);
+    $('#btnAplicar').onclick = aplicarEventos;
+    $('#btnDescartar').onclick = () => { S.pendentes = null; renderCartoes(); };
+    $('#btnDesfazer').onclick = desfazer;
+    $('#inpAgora').onchange = (e) => { const v = U.parseDT(e.target.value); if (Number.isFinite(v)) mudarAgora(v); };
+    $$('[data-avanca]').forEach((b) => { b.onclick = () => mudarAgora(U.parseDT(S.cen.agora) + +b.dataset.avanca); });
+    $$('input[name="motor"]').forEach((r) => { r.onchange = () => { S.motor = r.value; renderMotor(); salvarLocal(); }; });
+    $('#inpChave').onchange = (e) => { S.chaves[S.motor] = e.target.value.trim(); if ($('#chkLembrar').checked) lsSet(LS_CHAVE(S.motor), S.chaves[S.motor]); };
+    $('#chkLembrar').onchange = (e) => { lsSet(LS_CHAVE(S.motor), e.target.checked ? (S.chaves[S.motor] || $('#inpChave').value.trim()) : null); };
+    $('#inpModelo').onchange = (e) => { S.modeloGemini = e.target.value.trim() || NV.MODELO_GEMINI; salvarLocal(); };
+
+    $('#formNeb').addEventListener('input', (e) => {
+      const i = e.target.dataset.neb;
+      if (i == null) return;
+      S.cen.solar.nebulosidade[+i] = +e.target.value / 100;
+      const rot = e.target.previousElementSibling && e.target.previousElementSibling.querySelector('b');
+      if (rot) rot.textContent = e.target.value + '%';
+    });
+    $('#formNeb').addEventListener('change', (e) => { if (e.target.dataset.neb != null) marcarSujo(); });
+    $('#tabPrecos').addEventListener('click', (e) => {
+      if (e.target.id !== 'btnRestaurarTarifa') return;
+      const p = TA.PRESETS['enel-sp-2026'];
+      S.cen.tarifa.precos = U.clonar(p.precos); S.cen.tarifa.ponta = U.clonar(p.ponta); S.cen.tarifa.fioB = U.clonar(p.fioB); S.cen.tarifa.teReativo = p.teReativo;
+      renderFormularios(); marcarSujo(); toast('Valores da Enel SP restaurados.');
+    });
+    $('#btnDiag').onclick = rodarDiagnostico;
+    $('#btnRelatorio2').onclick = gerarRelatorio;
+    $('#btnEmailEng').onclick = emailEngenheiro;
+    $('#btnCopiarResumo').onclick = copiarResumo;
+
+    const dica = $('#dica');
+    const posicionar = (e) => {
+      const w = dica.offsetWidth, h = dica.offsetHeight;
+      let x = e.clientX + 14, y = e.clientY + 14;
+      if (x + w > window.innerWidth - 8) x = e.clientX - w - 14;
+      if (y + h > window.innerHeight - 8) y = e.clientY - h - 14;
+      dica.style.left = Math.max(4, x) + 'px'; dica.style.top = Math.max(4, y) + 'px';
+    };
+    document.addEventListener('mouseover', (e) => {
+      const el = e.target.closest && e.target.closest('[data-dica]');
+      if (!el) { dica.hidden = true; return; }
+      dica.textContent = el.dataset.dica; dica.hidden = false; posicionar(e);
+    });
+    document.addEventListener('mousemove', (e) => { if (!dica.hidden) posicionar(e); });
+  }
+
+  function iniciar() {
+    $('#selExemplo').innerHTML = '<option value="">Trocar de cenário…</option>' + Object.entries(CC.EXEMPLOS).map(([k, v]) => `<option value="${k}">${esc(v.titulo)}</option>`).join('');
+    ligar();
+    const salvo = carregarLocal();
+    if (salvo) {
+      S.motor = ['local', 'gemini', 'claude'].includes(salvo.motor) ? salvo.motor : 'local';
+      S.modeloGemini = salvo.modeloGemini || NV.MODELO_GEMINI;
+      definirCenario(salvo.cen, salvo.base && salvo.otim ? { base: salvo.base, otim: salvo.otim } : null);
+    } else {
+      definirCenario(CC.EXEMPLOS.metalurgica.cenario, null);
+    }
+    renderMotor();
+    const abaInicial = location.hash.slice(1);
+    if (ABAS.includes(abaInicial)) irPara(abaInicial);
+    window.addEventListener('hashchange', () => { const a = location.hash.slice(1); if (ABAS.includes(a) && a !== S.aba) irPara(a); });
+    if (!window.Chart) toast('A biblioteca de gráficos não carregou; os números continuam valendo.', 'erro');
+    if (S.serialOtim) {
+      try { avaliarAtual(); } catch (e) { console.error(e); planejar({ zerar: true }); }
+    } else planejar({ zerar: true });
+  }
+
+  CC.app = { estado: S, planejar, avaliarAtual, interpretar, aplicarEventos, rodarDiagnostico, gerarRelatorio, irPara };
+  iniciar();
+})();
