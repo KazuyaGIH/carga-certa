@@ -1,8 +1,10 @@
 /* Testes automáticos do Carga Certa (sem navegador).
  * Rodar na pasta do projeto:   node testes/testar.js
  * Verifica: regras da agenda (máquinas, turnos, ordem das etapas, paradas, cargas flexíveis),
- * se a otimização não piora a conta, se a IA local entende frases de exemplo e a ponte com o
- * engenheiro (pedido em arquivo, fila por impacto, parecer e aviso quando os dados mudam).
+ * se a otimização não piora a conta, se a IA local entende frases de exemplo, a ponte com o
+ * engenheiro (pedido em arquivo, fila por impacto, parecer e aviso quando os dados mudam),
+ * quem faz o quê em cada recomendação, o impacto ambiental (kWh da rede, ponta, solar, CO2) e o
+ * acompanhamento das faturas (médias antes × depois comparadas com a economia prevista).
  */
 'use strict';
 const fs = require('fs');
@@ -14,7 +16,7 @@ const contexto = { console, setTimeout, clearTimeout };
 contexto.globalThis = contexto;
 vm.createContext(contexto);
 const ARQUIVOS = ['js/util.js', 'js/tarifas.js', 'js/solar.js', 'js/modelo.js', 'js/otimizador.js',
-  'js/diagnostico.js', 'js/revisao.js', 'js/ia-local.js', 'js/eventos.js', 'dados/exemplos.js'];
+  'js/diagnostico.js', 'js/revisao.js', 'js/impacto.js', 'js/ia-local.js', 'js/eventos.js', 'dados/exemplos.js'];
 for (const f of ARQUIVOS) {
   const p = path.join(raiz, f);
   if (fs.existsSync(p)) vm.runInContext(fs.readFileSync(p, 'utf8'), contexto, { filename: f });
@@ -235,6 +237,69 @@ function testarRevisao(r, d) {
   confere(ids(RV.ordenar(fila, 'percentual')) === 'bac', 'ordem por % errada: ' + ids(RV.ordenar(fila, 'percentual')));
   confere(ids(RV.ordenar(fila, 'antigos')) === 'bac', 'ordem por chegada errada: ' + ids(RV.ordenar(fila, 'antigos')));
   confere(ids(RV.ordenar(fila, 'reais', ['planejamento'], true)) === 'b', 'filtro por especialidade errado');
+
+  // Quem faz o quê: toda recomendação diz quem decide, executa, aprova e o entrave
+  confere(itens.every((i) => { const q = RV.quemFaz(i.id); return q && q.decide && q.executa && q.aprova && q.atencao; }), 'recomendação sem "quem faz o quê"');
+  confere(RV.quemFaz('__proto__') === null && RV.quemFaz('xyz') === null, 'quem faz o quê de recomendação desconhecida deveria ser vazio');
+  confere(/adicional noturno/.test(RV.quemFazTexto('agenda')) && /ART/.test(RV.quemFazTexto('solar')), 'texto de quem faz o quê incompleto');
+  // Faturas e fator de CO2 não invalidam o parecer
+  const c3 = U.clonar(j.cenario);
+  c3.acompanhamento = { inicioPlano: '2026-08', faturas: [{ mes: '2026-07', kWh: 1, demandaKW: 1, valor: 1 }] };
+  c3.impacto = { fatorEmissao: 0.05 };
+  confere(RV.assinaturaDados(c3, j.planos) === ped.assinatura, 'faturas ou fator de emissão não deveriam mudar a assinatura do parecer');
+}
+
+function testarImpacto(r, nome) {
+  console.log(`\n=== Impacto ambiental: ${nome} ===`);
+  const IM = CC.impacto;
+  const f = IM.FATOR_PADRAO;
+  const c = IM.comparar(r.inst, r.avB, r.avO, f);
+  const perto = (a, b, tol) => Math.abs(a - b) <= (tol == null ? 1e-6 : tol);
+  for (const [k, av] of [['hoje', r.avB], ['plano', r.avO]]) {
+    const m = c[k];
+    confere(perto(m.redeMes, av.kwh.rede * r.inst.fatorMes), `${k}: kWh da rede por mês errado`);
+    confere(perto(m.pontaMes, av.kwh.ponta * r.inst.fatorMes), `${k}: kWh na ponta por mês errado`);
+    confere(perto(m.pontaMes + m.foraPontaMes, m.redeMes, 1e-6), `${k}: ponta + fora de ponta deveria dar a energia da rede`);
+    confere(perto(m.co2KgMes, m.redeMes * f), `${k}: CO2 deveria ser kWh da rede × fator`);
+    confere(perto(m.solarUsadaMes + m.solarInjetadaMes, m.solarGeradaMes, 1e-6), `${k}: solar usada + injetada deveria dar a gerada`);
+  }
+  confere(Math.abs(c.difConsumoMes) <= 0.01 * c.hoje.consumoMes, 'a agenda não deveria mudar o consumo total da fábrica');
+  confere(perto(c.difCo2KgMes, c.difRedeMes * f, 1e-6), 'diferença de CO2 deveria vir só da energia da rede');
+  confere(c.deslocadoPontaMes > 0, 'o plano deveria tirar energia da ponta');
+  confere(perto(IM.medir(r.inst, r.avO, 0.05).co2KgMes, c.plano.redeMes * 0.05), 'fator de emissão configurável não foi usado');
+  const tx = IM.textos(c);
+  confere(tx.length >= 3 && tx.some((t) => /4 GW/.test(t)) && tx.some((t) => /20,6%/.test(t)), 'textos de impacto incompletos');
+  console.log(`  rede ${U.num(c.hoje.redeMes)} -> ${U.num(c.plano.redeMes)} kWh/mês | ponta ${U.num(c.hoje.pontaMes)} -> ${U.num(c.plano.pontaMes)} kWh/mês | solar usada ${U.num(c.hoje.solarUsadaMes)} -> ${U.num(c.plano.solarUsadaMes)} kWh/mês | CO2 ${U.num(c.hoje.co2KgMes)} -> ${U.num(c.plano.co2KgMes)} kg/mês`);
+  return c;
+}
+
+function testarAcompanhamento(r) {
+  console.log('\n=== Acompanhamento das faturas ===');
+  const IM = CC.impacto;
+  confere(IM.lerMes('2026-08') === '2026-08' && IM.lerMes('8/2026') === '2026-08' && IM.lerMes('2026-13') === '' && IM.lerMes('x') === '', 'leitura do mês errada');
+  confere(IM.mesSeguinte('2026-12') === '2027-01', 'mês seguinte errado');
+  const lixo = IM.normalizarAcomp({ inicioPlano: 'ontem', faturas: [null, 3, { mes: '2026-02', kWh: 'abc', valor: '100' }] });
+  confere(lixo.inicioPlano === '' && lixo.faturas.length === 1 && lixo.faturas[0].kWh === null && lixo.faturas[0].valor === 100, 'normalização das faturas falhou');
+  const prev = IM.previsto(r.inst, r.avB, r.avO);
+  confere(prev.contratada === 100 && Math.abs(prev.economiaPct - (r.avB.contaMes - r.avO.contaMes) / r.avB.contaMes) < 1e-9, 'economia prevista errada');
+  const ex = CC.EXEMPLOS.metalurgica.acompanhamentoExemplo;
+  const a = IM.acompanhar(ex, prev);
+  const mediaA = (15180 + 15760 + 14920 + 15540 + 15980) / 5, mediaD = (13240 + 12410 + 12290) / 3;
+  confere(a.antes.length === 5 && a.depois.length === 3, 'faturas separadas errado em antes/depois');
+  confere(Math.abs(a.mediaAntes.valor - mediaA) < 1e-6 && Math.abs(a.mediaDepois.valor - mediaD) < 1e-6, 'médias das faturas erradas');
+  confere(Math.abs(a.economiaPct - (mediaA - mediaD) / mediaA) < 1e-9, 'economia real errada');
+  confere(a.estado === 'ok', 'exemplo deveria ficar perto do previsto: ' + a.estado);
+  confere(a.ultrapassagens.join() === '2026-04,2026-06,2026-07', 'meses com ultrapassagem errados: ' + a.ultrapassagens.join());
+  confere(IM.acompanhar(ex, Object.assign({}, prev, { economiaPct: 0.3 })).estado === 'abaixo', 'economia abaixo da prevista deveria avisar');
+  const pior = U.clonar(ex); pior.faturas.forEach((x) => { if (x.mes >= pior.inicioPlano) x.valor = 16000; });
+  confere(IM.acompanhar(pior, prev).estado === 'sem-economia', 'sem economia deveria avisar');
+  confere(IM.acompanhar({ faturas: ex.faturas }, prev).estado === 'sem-inicio', 'sem mês de início deveria pedir o mês');
+  confere(IM.acompanhar({ inicioPlano: '2026-03', faturas: ex.faturas }, prev).estado === 'faltam-dados', 'sem meses antes deveria pedir mais faturas');
+  confere(IM.acompanhar(null, prev).estado === 'sem-faturas', 'sem faturas deveria pedir faturas');
+  const rep = IM.acompanhar({ inicioPlano: '2026-08', faturas: ex.faturas.concat([{ mes: '2026-09', valor: 1 }]) }, prev);
+  confere(rep.repetidos.join() === '2026-09', 'mês repetido não foi detectado');
+  console.log(`  média antes ${U.brl(a.mediaAntes.valor)} | depois ${U.brl(a.mediaDepois.valor)} | real ${U.pct(a.economiaPct, 1)} x prevista ${U.pct(prev.economiaPct, 1)} -> ${a.estado}`);
+  console.log('  ' + IM.textoAcomp(a).texto);
 }
 
 (async () => {
@@ -243,6 +308,9 @@ function testarRevisao(r, d) {
   testarIA(r1.cen);
   const d1 = await testarEventosEDiagnostico(r1);
   testarRevisao(r1, d1);
+  testarImpacto(r1, 'Metalúrgica');
+  testarImpacto(r2, 'Padaria');
+  testarAcompanhamento(r1);
   console.log('\n--- padaria: modalidades ---');
   const m2 = await CC.diag.compararModalidades(r2.cen, CC.otim.serializar(r2.inst, r2.base), CC.otim.serializar(r2.inst, r2.otim), { replanejar: true });
   for (const l of m2.linhas) console.log(`  ${l.nome.padEnd(18)} hoje ${U.brl(l.contaHoje).padStart(10)} | agenda atual ${U.brl(l.contaAgendaAtual).padStart(10)} | replanejada ${U.brl(l.contaReplanejada).padStart(10)}${l.mesmoGrupo ? '' : '  (outro grupo)'}`);
