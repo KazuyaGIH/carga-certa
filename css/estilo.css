@@ -39,7 +39,7 @@ code { background: #eef1f4; border-radius: 4px; padding: 1px 5px; font-size: 13p
 .marca p { margin: 0; color: var(--sutil); font-size: 13px; }
 .acoes { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 select, input, textarea, button { font: inherit; color: inherit; }
-select, input[type="text"], input[type="number"], input[type="password"], input[type="datetime-local"], input[type="date"], input[type="time"], textarea {
+select, input[type="text"], input[type="email"], input[type="number"], input[type="password"], input[type="datetime-local"], input[type="date"], input[type="time"], textarea {
   border: 1px solid var(--borda-forte); border-radius: 6px; padding: 6px 8px; background: #fff; min-width: 0;
 }
 textarea { width: 100%; resize: vertical; }
@@ -207,6 +207,60 @@ main { max-width: 1320px; margin: 0 auto; padding: 20px 24px 40px; }
 .numeros span { display: block; color: var(--sutil); font-size: 12px; }
 .numeros strong { font-size: 18px; }
 
+/* ---------- avaliação por engenheiro ---------- */
+.form .largo { grid-column: 1 / -1; }
+.form label textarea { color: var(--texto); font-size: 14px; }
+.form-1 { grid-template-columns: minmax(0, 1fr); }
+.estado-pedido { margin: 12px 0 0; padding: 8px 12px; background: var(--acento-claro); border-radius: 6px; }
+.parecer { border: 1px solid #b9dcc4; background: #f3faf5; border-radius: 6px; padding: 10px 12px; margin-top: 12px; }
+.parecer.desatualizado { border-color: #f1d7a6; background: var(--alerta-claro); }
+.parecer > p { margin: 0 0 8px; }
+.parecer .cartao-aviso { margin: 0 0 8px; }
+.parecer-itens { margin: 0; padding-left: 20px; }
+.parecer-itens li { margin-bottom: 6px; }
+.parecer-obs { margin: 8px 0 0 !important; }
+.rec-nota { display: block; color: var(--acento-escuro); font-size: 13px; margin-top: 2px; }
+.tag.alerta { background: var(--alerta-claro); color: var(--alerta); }
+.grade-eng { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(0, 2.4fr); gap: 16px; align-items: start; margin-bottom: 16px; }
+.grade-eng > .painel { margin-bottom: 0; }
+.especialidades { border: 0; padding: 0; margin: 14px 0 0; display: grid; gap: 6px; min-width: 0; }
+.especialidades legend { font-size: 13px; color: var(--sutil); padding: 0; margin-bottom: 6px; }
+.especialidades label { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+.especialidades input, .filtros-fila input, .conferir input { accent-color: var(--acento); }
+.filtros-fila { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+.filtros-fila .check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.fila { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.pedido { border: 1px solid var(--borda); border-left: 4px solid var(--borda-forte); border-radius: 6px; padding: 10px 12px; }
+.pedido.combina { border-left-color: var(--acento); }
+.pedido.aberto { border-color: var(--acento); border-left-color: var(--acento); background: #fbfdfc; }
+.pedido-cab { display: flex; justify-content: space-between; align-items: baseline; gap: 8px 12px; flex-wrap: wrap; }
+.pedido-sub { margin: 2px 0 0; color: var(--sutil); font-size: 13px; }
+.pedido-num { margin: 6px 0 0; font-size: 14px; }
+.pedido-num strong { color: var(--acento-escuro); }
+.pedido-areas { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.pedido-msg { margin: 8px 0 0; font-size: 14px; color: var(--sutil); font-style: italic; }
+.pedido .linha-botoes { margin-top: 10px; }
+.recado { margin: 8px 0 12px; padding: 6px 12px; border-left: 3px solid var(--borda-forte); color: var(--sutil); font-style: italic; }
+.itens-rev { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 12px; }
+.item-rev { border: 1px solid var(--borda); border-radius: 6px; padding: 12px 14px; }
+.item-cab { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.item-num { font-weight: 700; }
+.item-eco { font-weight: 650; color: var(--ok); font-size: 14px; }
+.item-texto { margin: 8px 0 10px; }
+.conferir { border: 1px solid var(--borda); background: #f8fafb; border-radius: 6px; padding: 8px 10px; display: grid; gap: 6px; margin-bottom: 10px; }
+.conferir-tit { margin: 0; font-size: 13px; font-weight: 650; display: flex; justify-content: space-between; gap: 8px; }
+.conferir-tit span { color: var(--sutil); font-weight: 500; white-space: nowrap; }
+.conferir .check { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; cursor: pointer; }
+.conferir .check input { margin-top: 3px; flex: none; }
+.seg.decisao { display: flex; }
+.seg.decisao button { font-size: 14px; padding: 6px 12px; flex: 1 1 auto; border-bottom: 1px solid var(--borda); margin-bottom: -1px; }
+.seg.decisao button.ativo.dec-aprovada { background: #e6f4ea; color: var(--ok); }
+.seg.decisao button.ativo.dec-ajuste { background: var(--alerta-claro); color: var(--alerta); }
+.seg.decisao button.ativo.dec-recusada { background: var(--perigo-claro); color: var(--perigo); }
+.campo { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--sutil); margin-top: 10px; }
+.campo textarea { color: var(--texto); font-size: 14px; }
+#revProblemas { margin-top: 10px; }
+
 /* ---------- texto (como funciona) ---------- */
 .aba.texto .painel { max-width: 980px; }
 .aba.texto h3 { margin: 18px 0 8px; }
@@ -243,7 +297,7 @@ main { max-width: 1320px; margin: 0 auto; padding: 20px 24px 40px; }
 
 /* ---------- telas menores ---------- */
 @media (max-width: 960px) {
-  .grade2, .grade-eventos { grid-template-columns: minmax(0, 1fr); }
+  .grade2, .grade-eventos, .grade-eng { grid-template-columns: minmax(0, 1fr); }
   .grade2 > .painel { margin-bottom: 16px; }
 }
 @media (max-width: 640px) {
