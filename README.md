@@ -1,7 +1,7 @@
 # Carga Certa
 
 **Planejamento de produção que olha a conta de luz.** Protótipo da equipe **T³ch** para o **Hack@Poli 2026**
-("Engenharia com propósito: o papel do engenheiro na Agenda 2030"; eixo Inovação e Digitalização da Indústria Nacional; ODS 7, 9 e 12).
+("Engenharia com propósito: o papel do engenheiro na Agenda 2030"; eixo Inovação e Digitalização da Indústria Nacional; ODS 7, 9 e 12).  
 
 **Abrir o protótipo:** https://kazuyagih.github.io/carga-certa/
 
@@ -121,6 +121,7 @@ Não há etapa de compilação: é HTML, CSS e JavaScript puro.
 - A fila de pedidos fica no navegador de cada pessoa, e o pedido chega a outro engenheiro por arquivo. Numa versão completa, a fila seria compartilhada, com cadastro dos engenheiros e conferência do registro no CREA.
 - O CO₂ usa o fator médio anual da rede, não o de cada hora; por isso mudar só o horário quase não muda o CO₂ calculado. A energia injetada pela solar não entra na conta do CO₂.
 - As faturas do acompanhamento são digitadas à mão. A comparação usa a porcentagem de economia, porque a simulação estima o mês a partir de uma semana; se a produção mudar muito, compare também o kWh.
+- O MVP não contempla inserções de GDs diferentes de fotovoltaicos.
 
 ## Fontes
 
