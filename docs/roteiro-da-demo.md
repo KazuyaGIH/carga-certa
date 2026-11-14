@@ -57,7 +57,7 @@ Volte à aba **Diagnóstico**: o parecer aparece com o nome do engenheiro, e cad
 
 **E se a mensagem estiver errada?** O cartão mostra o que a IA entendeu, com campos editáveis, e dá para desfazer o último evento.
 
-**Isso vale para baixa tensão?** Vale. O exemplo da padaria (grupo B3) mostra a Tarifa Branca: trocar de tarifa sem mudar a agenda deixa a conta 19% mais cara; replanejando, ela fica mais barata que a Convencional.
+**Isso vale para baixa tensão?** Vale. O exemplo da padaria (grupo B3) mostra a Tarifa Branca: trocar de tarifa sem mudar a agenda deixa a conta 19% mais cara; replanejando, ela fica mais barata que a Convencional. 
 
 **Gastar menos é o mesmo que poluir menos?** Não, e a ferramenta mostra a diferença (Visão geral, bloco "Impacto na rede e no clima"; tabela completa no fim do Diagnóstico). A agenda muda o horário, quase não muda o total: na metalúrgica o consumo continua em 22.078 kWh/mês. O CO₂ só cai quando cai a energia tirada da rede, aqui porque a fábrica usa mais da própria solar: 15.331 → 14.778 kWh/mês da rede, 590 → 569 kg de CO₂ por mês (fator médio do SIN, 38,5 kg/MWh em 2023, MCTI). O ganho maior é no horário: 2.119 kWh/mês saem da ponta, quando o ONS aciona termelétricas (em julho de 2025 previa déficit de cerca de 4 GW nesse horário), e o consumo vai para o meio do dia, quando sobra solar e eólica (cerca de 20,6% da energia limpa que poderia ter sido gerada em 2025 foi cortada, segundo a Volt Robotics).
 
