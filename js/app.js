@@ -376,7 +376,8 @@
       { campo: 'mes', titulo: 'Mês', tipo: 'mes', largura: '150px', erro: 'Mês não entendido. Use, por exemplo, 2026-08 ou 08/2026.',
         ler: (el, l) => { const m = IM.lerMes(el.value); l.mes = m || ''; if (m && el.value !== m) el.value = m; return !!m || !el.value.trim(); } },
       { campo: 'kWh', titulo: 'Energia (kWh)', tipo: 'numero', vazio: true, largura: '120px' },
-      { campo: 'demandaKW', titulo: 'Demanda medida (kW)', tipo: 'numero', vazio: true, largura: '130px' },
+      { campo: 'demandaKW', titulo: 'Demanda máxima (kW)', tipo: 'numero', vazio: true, largura: '130px',
+        dica: 'Maior potência média de 15 minutos registrada no mês. Na fatura do grupo A aparece como "demanda medida". Não é a média do mês nem o pico instantâneo.' },
       { campo: 'valor', titulo: 'Valor total (R$)', tipo: 'numero', vazio: true, largura: '130px' },
     ], () => {
       const ult = a.faturas.map((f) => f.mes).filter(Boolean).sort().pop();
@@ -409,7 +410,7 @@
         <div><span>Prevista pela simulação</span><strong>${r.previsto ? U.pct(r.previsto.economiaPct, 1) : '—'}</strong><small>${r.previsto ? `${U.brl(r.previsto.economiaMes)} por mês, estimados pela semana analisada` : 'otimize a agenda primeiro'}</small></div>
       </div>`;
     }
-    if (r.ultrapassagens.length) h += `<p class="cartao-aviso">Demanda medida acima de 105% da contratada (${U.num(r.previsto.contratada, 0)} kW) em ${r.ultrapassagens.map(IM.fmtMes).join(', ')}: nesses meses houve multa de ultrapassagem.</p>`;
+    if (r.ultrapassagens.length) h += `<p class="cartao-aviso">Demanda máxima acima de 105% da contratada (${U.num(r.previsto.contratada, 0)} kW) em ${r.ultrapassagens.map(IM.fmtMes).join(', ')}: nesses meses houve multa de ultrapassagem.</p>`;
     if (r.repetidos.length) h += `<p class="cartao-aviso">Mês digitado mais de uma vez: ${r.repetidos.map(IM.fmtMes).join(', ')}. As duas faturas entram na média.</p>`;
     h += '<p class="nota">A simulação estima a conta a partir de uma semana; por isso a comparação usa a porcentagem de economia. Se a produção mudou muito de um mês para outro, compare também a energia (kWh).</p>';
     $('#resAcomp').innerHTML = h;
@@ -738,7 +739,7 @@
     const mudou = () => (opc.aoMudar ? opc.aoMudar() : marcarSujo());
     const desenhar = () => {
       let h = '<div class="tabela-rolagem"><table class="tabela editor"><thead><tr>';
-      for (const c of colunas) h += `<th${c.largura ? ` style="min-width:${c.largura}"` : ''}>${esc(c.titulo)}</th>`;
+      for (const c of colunas) h += `<th${c.largura ? ` style="min-width:${c.largura}"` : ''}${c.dica ? ` data-dica="${esc(c.dica)}"` : ''}>${esc(c.titulo)}</th>`;
       h += '<th class="col-acao"></th></tr></thead><tbody>';
       lista.forEach((linha, i) => {
         h += '<tr>' + colunas.map((c) => `<td>${campoEditor(c, linha, i)}</td>`).join('') + `<td class="col-acao"><button class="remover" data-rem="${i}" title="Remover" aria-label="Remover">×</button></td></tr>`;
@@ -1108,7 +1109,7 @@
     if (ac.faturas.length) {
       const msg = IM.textoAcomp(ac);
       h += `<section>${sec('Acompanhamento das faturas')}${cen.acompanhamento.exemplo ? '<p class="sutil">Faturas de exemplo (fictícias).</p>' : ''}<p>${esc(msg.texto)}</p>
-        <table><thead><tr><th>Mês</th><th class="num">Energia</th><th class="num">Demanda medida</th><th class="num">Valor</th><th>Período</th></tr></thead><tbody>${ac.faturas.map((f) => `<tr><td>${IM.fmtMes(f.mes)}</td><td class="num">${f.kWh == null ? '—' : n0(f.kWh) + ' kWh'}</td><td class="num">${f.demandaKW == null ? '—' : n0(f.demandaKW) + ' kW'}</td><td class="num">${f.valor == null ? '—' : U.brl(f.valor)}</td><td>${!ac.inicio ? '' : f.mes >= ac.inicio ? 'seguindo o plano' : 'antes do plano'}</td></tr>`).join('')}</tbody></table>
+        <table><thead><tr><th>Mês</th><th class="num">Energia</th><th class="num">Demanda máxima (15 min)</th><th class="num">Valor</th><th>Período</th></tr></thead><tbody>${ac.faturas.map((f) => `<tr><td>${IM.fmtMes(f.mes)}</td><td class="num">${f.kWh == null ? '—' : n0(f.kWh) + ' kWh'}</td><td class="num">${f.demandaKW == null ? '—' : n0(f.demandaKW) + ' kW'}</td><td class="num">${f.valor == null ? '—' : U.brl(f.valor)}</td><td>${!ac.inicio ? '' : f.mes >= ac.inicio ? 'seguindo o plano' : 'antes do plano'}</td></tr>`).join('')}</tbody></table>
         ${ac.economiaPct != null ? `<p class="sutil">Média antes: ${U.brl(ac.mediaAntes.valor)} por mês; média depois: ${U.brl(ac.mediaDepois.valor)}; economia real ${U.pct(ac.economiaPct, 1)}${ac.previsto ? `, prevista ${U.pct(ac.previsto.economiaPct, 1)}` : ''}.</p>` : ''}</section>`;
     }
     let assinatura = '<div class="assinatura"><div>Engenheiro(a) responsável · CREA</div><div>Data e assinatura</div></div>';

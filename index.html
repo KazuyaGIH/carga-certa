@@ -297,7 +297,7 @@
         <h3>Depois da mudança: a economia apareceu na fatura?</h3>
         <p>O plano só vale se a economia aparecer na fatura de verdade. Digite as faturas dos meses antes e depois de começar a seguir o plano. O Carga Certa compara a economia real com a que a simulação previu e avisa quando é hora de chamar o engenheiro de novo.</p>
         <ul class="passos">
-          <li><strong>Quem digita:</strong> o dono ou o administrativo, com a fatura na mão (energia em kWh, demanda medida e valor total).</li>
+          <li><strong>Quem digita:</strong> o dono ou o administrativo, com a fatura na mão (energia em kWh, demanda máxima e valor total).</li>
           <li><strong>Quem acompanha:</strong> o encarregado confere se a agenda está sendo seguida; se a economia ficar abaixo do previsto, o engenheiro que deu o parecer olha de novo.</li>
         </ul>
         <div id="avisoExemploAcomp"></div>
@@ -305,6 +305,7 @@
           <label for="acInicio">Mês em que começou a seguir o plano<input type="month" id="acInicio"></label>
         </div>
         <h4>Faturas</h4>
+        <p class="nota"><strong>Demanda máxima:</strong> o medidor calcula a potência média de cada intervalo de 15 minutos; a fatura traz a maior dessas médias no mês, com o nome de “demanda medida”. É ela que se compara com a demanda contratada para cobrar ultrapassagem. Não é a média do mês nem o pico de um instante. Na baixa tensão (grupo B) a fatura não traz esse valor: deixe em branco.</p>
         <div id="edFaturas"></div>
         <div class="linha-botoes">
           <button class="btn" id="btnAcExemplo" hidden>Carregar faturas de exemplo (fictícias)</button>
